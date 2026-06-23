@@ -3546,6 +3546,53 @@ var ccList  = internalAddresses.join(', ');
   var draftId = initialDraft.getId();
   Logger.log('Draft created: ' + draftId);
 
+  // ── Patch CC: remove marc-antoine from the draft via raw MIME surgery ─────
+  try {
+    var marcClean = 'marc-antoine@veloxpower.com';
+
+    // Fetch raw MIME of the draft (returns byte array)
+    var rawDraft = Gmail.Users.Drafts.get('me', draftId, { format: 'raw' });
+    var rawMime = Utilities.newBlob(rawDraft.message.raw).getDataAsString('UTF-8');
+
+    // Split into headers and body — headers end at first blank line
+    var headerBodySplit = rawMime.indexOf('\r\n\r\n');
+    if (headerBodySplit < 0) headerBodySplit = rawMime.indexOf('\n\n');
+    var headers = rawMime.substring(0, headerBodySplit);
+    var mimeBody = rawMime.substring(headerBodySplit);
+
+    // Patch the CC header — remove any token containing marc-antoine
+    headers = headers.replace(/^(Cc:.*)$/im, function(match) {
+      var parts = match.replace(/^Cc:\s*/i, '').split(',');
+      var filtered = parts.filter(function(p) {
+        return p.toLowerCase().indexOf(marcClean) < 0;
+      });
+      return filtered.length > 0 ? 'Cc: ' + filtered.join(',') : '';
+    });
+
+    // Also remove marc-antoine from To header if present (safety net)
+    headers = headers.replace(/^(To:.*)$/im, function(match) {
+      var parts = match.replace(/^To:\s*/i, '').split(',');
+      var filtered = parts.filter(function(p) {
+        return p.toLowerCase().indexOf(marcClean) < 0;
+      });
+      return 'To: ' + filtered.join(',');
+    });
+
+    // Re-encode and update the draft
+    var patchedMime = headers + mimeBody;
+    var rawBytes = [];
+    for (var ci = 0; ci < patchedMime.length; ci++) {
+      rawBytes.push(patchedMime.charCodeAt(ci));
+    }
+    var encodedMime = Utilities.base64EncodeWebSafe(rawBytes);
+
+    Gmail.Users.Drafts.update({ message: { raw: encodedMime } }, 'me', draftId);
+    Logger.log('CC patched — marc-antoine removed from draft');
+
+  } catch(e) {
+    Logger.log('CC patch failed (draft still usable): ' + e.message);
+  }
+
   // Apply dealer label
   var label = GmailApp.getUserLabelByName(dealer);
   if (!label) { try { label = GmailApp.createLabel(dealer); } catch(e) {} }
