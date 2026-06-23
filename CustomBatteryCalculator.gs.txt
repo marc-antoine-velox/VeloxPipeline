@@ -291,33 +291,30 @@ function calculateCustomBattery(compartment, voltage, targetAh) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function buildSerpentinePath(cols, rows, totalPacks) {
-  // Build grid — fill column by column, top to bottom
+  // Build grid filled in TRAVERSAL order — packs numbered by series wiring sequence
+  // Even cols (0,2,4): top→bottom. Odd cols (1,3,5): bottom→top.
   var grid = [];
   var packNum = 1;
+
   for (var c = 0; c < cols; c++) {
-    var col = [];
-    for (var r = 0; r < rows; r++) {
-      if (packNum <= totalPacks) {
-        col.push(packNum++);
-      } else {
-        col.push(null); // empty slot in last column if totalPacks not divisible
+    var col = new Array(rows).fill(null);
+    if (c % 2 === 0) {
+      // Even col: fill top→bottom
+      for (var r = 0; r < rows; r++) {
+        if (packNum <= totalPacks) col[r] = packNum++;
+      }
+    } else {
+      // Odd col: fill bottom→top
+      for (var r = rows - 1; r >= 0; r--) {
+        if (packNum <= totalPacks) col[r] = packNum++;
       }
     }
     grid.push(col);
   }
 
-  // Build serpentine path
+  // Path is now simply sequential
   var path = [];
-  for (var c = 0; c < grid.length; c++) {
-    var col = grid[c].filter(function(p) { return p !== null; });
-    if (c % 2 === 0) {
-      // Even column: top → bottom (ascending)
-      col.forEach(function(p) { path.push(p); });
-    } else {
-      // Odd column: bottom → top (descending)
-      col.slice().reverse().forEach(function(p) { path.push(p); });
-    }
-  }
+  for (var p = 1; p <= totalPacks; p++) path.push(p);
 
   return { path: path, grid: grid };
 }
