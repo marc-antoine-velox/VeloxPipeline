@@ -138,7 +138,8 @@ function _htmlBuildDocument(ctx) {
         { muteHttpExceptions: true }
       );
       if (clearbitResp.getResponseCode() === 200) {
-        clientLogoB64 = Utilities.base64Encode(clearbitResp.getBlob().getBytes());
+          const clearbitB64 = Utilities.base64Encode(clearbitResp.getBlob().getBytes());
+          if (clearbitB64.length > 100) clientLogoB64 = clearbitB64;
         Logger.log('Client logo: Clearbit hit for ' + params.customer_domain);
       }
     } catch(e) {
@@ -162,8 +163,13 @@ function _htmlBuildDocument(ctx) {
         );
         if (logoResp.getResponseCode() === 200) {
           const logoData = JSON.parse(logoResp.getContentText());
-          if (logoData.logo) {
-            clientLogoB64 = logoData.logo;
+          if (logoData.logo && logoData.logo.length > 100) {
+            const decoded = Utilities.newBlob(Utilities.base64Decode(logoData.logo)).getDataAsString().substring(0, 50);
+            if (decoded.indexOf('<svg') < 0 && decoded.indexOf('<?xml') < 0) {
+              clientLogoB64 = logoData.logo;
+            } else {
+              Logger.log('Client logo: SVG rejected — not usable as img src');
+            }
             Logger.log('Client logo: Puppeteer scraped from ' + params.customer_domain + ' | url: ' + logoData.url);
           }
         } else {
