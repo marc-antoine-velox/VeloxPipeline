@@ -468,3 +468,25 @@ function testCustomBattery_AMOD() {
 
   Logger.log('=== TEST COMPLETE ===');
 }
+
+function testCustomBattery_EFG320() {
+  Logger.log('=== TEST: Jungheinrich EFG320 custom battery ===');
+  const compartment = '32.68 x 29.06 x 24.69';
+  const voltage = 48;
+  const tiers = CUSTOM_AH_TIERS_BY_VOLTAGE[48];
+  tiers.forEach(function(tier) {
+    const result = calculateCustomBattery(compartment, voltage, tier);
+    if (result) {
+      Logger.log(tier + 'Ah → ' + result.cellName +
+                 ' | achieved=' + result.achievedAh + 'Ah' +
+                 ' | ' + result.cols + ' cols × ' + result.rows + ' rows' +
+                 ' | ' + result.totalCells + ' cells' +
+                 ' | depth ' + result.depthUsed.toFixed(2) + '"/' + result.caissonDepth.toFixed(2) + '"' +
+                 ' | width ' + result.widthUsed.toFixed(2) + '"/' + result.caissonWidth.toFixed(2) + '"' +
+                 ' | fits=' + (result.depthUsed <= result.caissonDepth && result.widthUsed <= result.caissonWidth ? 'YES' : 'NO'));
+    } else {
+      Logger.log(tier + 'Ah → NO FIT');
+    }
+  });
+  Logger.log('=== TEST COMPLETE ===');
+}
