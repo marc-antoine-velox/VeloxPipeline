@@ -37,8 +37,8 @@ function generateCustomBatteryHTML(params, ghostResult) {
     const grid      = layout.serpentinePath.grid;
 
     // Scale: depth 10px/inch, width 14px/inch
-    const scaleD = 8;
-    const scaleW = 12;
+    const scaleD = 6;
+    const scaleW = 9;
 
     // Pack pixel dimensions
     const packPxDepth = layout.packDepth * scaleD;   // e.g. 6.85×10=68.5
@@ -365,8 +365,8 @@ function generateCustomBatteryHTML(params, ghostResult) {
     const cols = layout.cols;
 
     // Scale: width 14px/inch, height 10px/inch
-    const scaleW = 12;
-    const scaleH = 8;
+   const scaleW = 9;
+    const scaleH = 6;
 
     const packPxWidth  = layout.packWidth * scaleW;
     const packPxHeight = layout.packHeight * scaleH;
@@ -657,7 +657,6 @@ function generateCustomBatteryHTML(params, ghostResult) {
   // ── PAGE 2: TOP-DOWN VIEW ─────────────────────────────────────────────────
   const page2 = `
 <div class="page">
-  <div style="break-inside:avoid;page-break-inside:avoid;">
   <h2>Top-down view — ${layout.cols} columns × ${layout.rows} rows</h2>
   <p class="sub">Looking into the compartment from above. Depth axis = vertical (going into forklift). Width axis = horizontal.</p>
   <div class="svg-wrap">${buildTopDownSVG()}</div>
@@ -677,11 +676,9 @@ function generateCustomBatteryHTML(params, ghostResult) {
   // ── PAGE 3: FRONT VIEW ────────────────────────────────────────────────────
   const page3 = `
 <div class="page">
- <div style="break-inside:avoid;page-break-inside:avoid;">
   <h2>Front view — packs standing upright</h2>
   <p class="sub">Looking straight into the compartment opening. Width axis = horizontal. Height axis = vertical. Cells stand upright — height is rarely a constraint.</p>
   <div class="svg-wrap">${buildFrontViewSVG()}</div>
-  </div>
   <div class="dim-summary">
     <div class="dim-card">
       <div class="dim-label">Width axis</div>
@@ -817,7 +814,7 @@ function testCustomBatteryHTML_AMOD() {
     {
       method:      'post',
       contentType: 'application/json',
-      payload:     JSON.stringify({ html: html }),
+      payload:     JSON.stringify({ html: html, pageFormat: 'Letter' }),
       muteHttpExceptions: true
     }
   );
