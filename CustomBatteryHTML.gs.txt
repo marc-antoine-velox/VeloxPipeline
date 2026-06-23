@@ -677,9 +677,11 @@ function generateCustomBatteryHTML(params, ghostResult) {
   // ── PAGE 3: FRONT VIEW ────────────────────────────────────────────────────
   const page3 = `
 <div class="page">
+ <div style="break-inside:avoid;page-break-inside:avoid;">
   <h2>Front view — packs standing upright</h2>
   <p class="sub">Looking straight into the compartment opening. Width axis = horizontal. Height axis = vertical. Cells stand upright — height is rarely a constraint.</p>
   <div class="svg-wrap">${buildFrontViewSVG()}</div>
+  </div>
   <div class="dim-summary">
     <div class="dim-card">
       <div class="dim-label">Width axis</div>
