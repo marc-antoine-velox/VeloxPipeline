@@ -657,6 +657,7 @@ function generateCustomBatteryHTML(params, ghostResult) {
   // ── PAGE 2: TOP-DOWN VIEW ─────────────────────────────────────────────────
   const page2 = `
 <div class="page">
+  <div style="break-inside:avoid;page-break-inside:avoid;">
   <h2>Top-down view — ${layout.cols} columns × ${layout.rows} rows</h2>
   <p class="sub">Looking into the compartment from above. Depth axis = vertical (going into forklift). Width axis = horizontal.</p>
   <div class="svg-wrap">${buildTopDownSVG()}</div>
@@ -669,6 +670,7 @@ function generateCustomBatteryHTML(params, ghostResult) {
     <span class="leg-item"><span class="swatch" style="background:#EF9F27;border:1px solid #BA7517;"></span> Col 3 cell B</span>
     <span class="leg-item"><span class="swatch" style="background:#FFF3CD;border:1px solid #856404;"></span> Fill / clearance</span>
     <span class="leg-item"><span style="color:#E24B4A;font-weight:500;">→</span> Series path</span>
+</div>
   </div>
 </div>`;
 
@@ -714,9 +716,15 @@ function generateCustomBatteryHTML(params, ghostResult) {
          color: #1a1a1a; background: white; padding: 24px; }
   h1 { font-size: 18px; font-weight: 600; margin-bottom: 4px; color: #1a1a1a; }
   h2 { font-size: 14px; font-weight: 500; margin-bottom: 12px; color: #444444; }
-  .page { margin-bottom: 0; page-break-after: always; page-break-inside: avoid; }
-  .svg-wrap { page-break-inside: avoid; }
+  .page { margin-bottom: 0; page-break-after: always; page-break-inside: avoid; break-inside: avoid; }
+  .svg-wrap { page-break-inside: avoid; break-inside: avoid; display: block; }
   .page:last-child { page-break-after: avoid; }
+  svg { display: block; max-width: 100%; }
+  @media print {
+    body { padding: 12px; }
+    .page { page-break-after: always; break-after: page; }
+    .page:last-child { page-break-after: avoid; break-after: avoid; }
+  }
   .section-title { font-size: 11px; font-weight: 600; color: #555555;
                    text-transform: uppercase; letter-spacing: 0.5px;
                    margin: 16px 0 6px; border-bottom: 0.5px solid #dddddd;
