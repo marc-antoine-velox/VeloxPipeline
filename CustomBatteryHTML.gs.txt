@@ -1,0 +1,822 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOM BATTERY HTML GENERATOR
+// Velox Power Systems — SimulationAutomation
+//
+// Generates a 3-page internal HTML document for custom weightbox batteries:
+//   Page 1 — Summary (forklift info, ghost sim result, battery specs)
+//   Page 2 — Top-down view (serpentine pack layout with dimensions)
+//   Page 3 — Front view (packs standing upright with dimensions)
+//
+// Output sent to Cloud Run PDF service, saved to Drive, linked in review email.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function generateCustomBatteryHTML(params, ghostResult) {
+  const layout      = ghostResult.layout;
+  const cell        = layout.cell;
+  const compartment = layout.compDepth.toFixed(2) + '" × ' +
+                      layout.compWidth.toFixed(2) + '" × ' +
+                      layout.compHeight.toFixed(2) + '"';
+
+  // ── Dimension strings ─────────────────────────────────────────────────────
+  const fmtN = function(n) { return Math.round(n * 100) / 100; };
+  const f2   = function(n) { return n.toFixed(2); };
+
+  // ── Serpentine path label ─────────────────────────────────────────────────
+  const pathStr = ghostResult.layout.serpentinePath.path.join(' → ');
+
+  // ── Col direction labels ──────────────────────────────────────────────────
+  function colDirectionLabel(colIdx) {
+    return colIdx % 2 === 0 ? '↓' : '↑';
+  }
+
+  // ── SVG HELPERS ───────────────────────────────────────────────────────────
+  // Generates top-down SVG dynamically from layout
+  function buildTopDownSVG() {
+    const cols      = layout.cols;
+    const rows      = layout.rows;
+    const grid      = layout.serpentinePath.grid;
+
+    // Scale: depth 10px/inch, width 14px/inch
+    const scaleD = 8;
+    const scaleW = 12;
+
+    // Pack pixel dimensions
+    const packPxDepth = layout.packDepth * scaleD;   // e.g. 6.85×10=68.5
+    const packPxWidth = layout.packWidth * scaleW;   // e.g. 4.24×14=59.4
+    const cellPxWidth = cell.width * scaleW;         // e.g. 2.12×14=29.7
+
+    // Compartment pixel dimensions
+    const compPxDepth = layout.compDepth * scaleD;
+    const compPxWidth = layout.compWidth * scaleW;
+    const caissonPxDepth = layout.caissonDepth * scaleD;
+    const caissonPxWidth = layout.caissonWidth * scaleW;
+    const clearancePxWidth = (layout.compWidth - layout.caissonWidth) / 2 * scaleW;
+
+    // Pack grid pixel dimensions
+    const gridPxDepth = rows * packPxDepth;
+    const gridPxWidth = cols * packPxWidth;
+
+    // Layout zones (y positions)
+    const titleY    = 14;
+    const pathLabelY = 30;  // #last→#first label
+    const colLabelY  = 48;  // col direction labels
+    const arrowCurveY = 56; // top arrow curve
+    const compStartY = 70;  // compartment top edge
+    const compStartX = 70;  // compartment left edge
+    const caissonStartX = compStartX + clearancePxWidth;
+    const caissonStartY = compStartY + 4; // 0.39" depth clearance ×10
+
+    // Pack grid starts at caisson interior
+    const gridStartX = caissonStartX;
+    const gridStartY = caissonStartY;
+
+    // BMS zone
+    const bmsStartY  = gridStartY + gridPxDepth;
+    const bmsEndY    = caissonStartY + caissonPxDepth;
+    const bmsMidY    = bmsStartY + (bmsEndY - bmsStartY) / 2;
+
+    // Right side annotations start x
+    const annoX = compStartX + compPxWidth + 20;
+
+    // Total SVG height
+    const bottomAnnotationsHeight = 180; // space for bottom dim lines
+    const svgHeight = compStartY + compPxDepth + bottomAnnotationsHeight + 40;
+
+    // Color scheme per column (cycle through 3)
+    const colColors = [
+      { fill1: '#B5D4F4', fill2: '#85B7EB', stroke: '#185FA5', text: '#0C447C' },
+      { fill1: '#9FE1CB', fill2: '#5DCAA5', stroke: '#0F6E56', text: '#085041' },
+      { fill1: '#FAC775', fill2: '#EF9F27', stroke: '#854F0B', text: '#633806' }
+    ];
+
+    // Build pack rectangles
+    var packRects = '';
+    for (var c = 0; c < cols; c++) {
+      const col    = grid[c];
+      const colors = colColors[c % 3];
+      const px     = gridStartX + c * packPxWidth;
+
+      for (var r = 0; r < col.length; r++) {
+        const packNum = col[r];
+        if (!packNum) continue;
+        const py      = gridStartY + r * packPxDepth;
+        const centerX = px + packPxWidth / 2;
+        const centerY = py + packPxDepth / 2 + 4;
+
+        // Draw individual cells inside pack
+        for (var ce = 0; ce < layout.cellsPerPack; ce++) {
+          const cx = px + ce * cellPxWidth;
+          const fillColor = ce === 0 ? colors.fill1 : colors.fill2;
+          packRects += '<rect x="' + cx + '" y="' + py + '" width="' + cellPxWidth +
+                       '" height="' + packPxDepth + '" rx="1" fill="' + fillColor +
+                       '" stroke="' + colors.stroke + '" stroke-width="0.5"/>';
+        }
+        // Pack boundary
+        packRects += '<rect x="' + (px - 1) + '" y="' + (py - 1) +
+                     '" width="' + (packPxWidth + 2) + '" height="' + (packPxDepth + 2) +
+                     '" rx="3" fill="none" stroke="' + colors.stroke + '" stroke-width="1.5"/>';
+        // Pack number label
+        packRects += '<text x="' + centerX + '" y="' + centerY +
+                     '" font-size="12" text-anchor="middle" font-weight="500"' +
+                     ' fill="' + colors.text + '" font-family="Arial,sans-serif">#' +
+                     packNum + '</text>';
+      }
+    }
+
+    // Build col labels
+    var colLabels = '';
+    for (var c = 0; c < cols; c++) {
+      const cx = gridStartX + c * packPxWidth + packPxWidth / 2;
+      colLabels += '<text x="' + cx + '" y="' + colLabelY +
+                   '" font-size="11" text-anchor="middle" font-weight="500"' +
+                   ' fill="#1a1a1a" font-family="Arial,sans-serif">Col ' + (c + 1) +
+                   ' ' + colDirectionLabel(c) + '</text>';
+    }
+
+    // Build serpentine arrows
+    // Downward cols: arrow on left edge. Upward cols: arrow on right edge of prev col.
+    var arrows = '';
+    // Col 1 down arrow
+    const col1ArrowX = gridStartX - 12;
+    arrows += '<line x1="' + col1ArrowX + '" y1="' + (gridStartY + 20) +
+              '" x2="' + col1ArrowX + '" y2="' + (gridStartY + gridPxDepth - 20) +
+              '" stroke="#E24B4A" stroke-width="1.5" marker-end="url(#arr)"/>';
+
+    // Bottom connection: last pack of col1 to first pack of col2
+    if (cols > 1) {
+      const p1cx = gridStartX + packPxWidth / 2;
+      const p2cx = gridStartX + packPxWidth + packPxWidth / 2;
+      const bottomY = gridStartY + gridPxDepth + 18;
+      arrows += '<path d="M' + p1cx + ' ' + (gridStartY + gridPxDepth + 4) +
+                ' Q' + p1cx + ' ' + (bottomY + 10) + ' ' + p2cx + ' ' + (bottomY + 10) +
+                '" stroke="#E24B4A" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>';
+      const pathLabelX = (p1cx + p2cx) / 2;
+      const path = layout.serpentinePath.path;
+      const pack5  = layout.serpentinePath.grid[0][rows - 1]; // bottom of col1
+      const pack6  = layout.serpentinePath.grid[1][grid[1].filter(function(p){return p!==null;}).length - 1]; // bottom of col2
+      arrows += '<text x="' + pathLabelX + '" y="' + (bottomY + 28) +
+                '" font-size="10" text-anchor="middle" fill="#E24B4A"' +
+                ' font-family="Arial,sans-serif">#' + pack5 + ' → #' + pack6 + '</text>';
+    }
+
+    // Top connection col2→col3 (if exists)
+    if (cols > 2) {
+      const p10cx = gridStartX + packPxWidth + packPxWidth / 2;
+      const p11cx = gridStartX + 2 * packPxWidth + packPxWidth / 2;
+      const topY  = gridStartY - 18;
+      arrows += '<path d="M' + p10cx + ' ' + (gridStartY - 4) +
+                ' Q' + p10cx + ' ' + (topY - 10) + ' ' + p11cx + ' ' + (topY - 10) +
+                '" stroke="#E24B4A" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>';
+      const path = layout.serpentinePath.path;
+      const pack10 = layout.serpentinePath.grid[1][0]; // top of col2 (going up)
+      const pack11 = layout.serpentinePath.grid[2][0]; // top of col3 (going down)
+      if (pack10 && pack11) {
+        arrows += '<text x="' + ((p10cx + p11cx) / 2) + '" y="' + (topY - 20) +
+                  '" font-size="10" text-anchor="middle" fill="#E24B4A"' +
+                  ' font-family="Arial,sans-serif">#' + pack10 + ' → #' + pack11 + '</text>';
+      }
+    }
+
+    // Remaining col down/up arrows
+    for (var c = 1; c < cols; c++) {
+      const cx = gridStartX + c * packPxWidth + (c % 2 === 0 ? -12 : packPxWidth + 4);
+      const direction = colDirectionLabel(c);
+      if (direction === '↓') {
+        arrows += '<line x1="' + cx + '" y1="' + (gridStartY + 20) +
+                  '" x2="' + cx + '" y2="' + (gridStartY + gridPxDepth - 20) +
+                  '" stroke="#E24B4A" stroke-width="1.5" marker-end="url(#arr)"/>';
+      } else {
+        arrows += '<line x1="' + cx + '" y1="' + (gridStartY + gridPxDepth - 20) +
+                  '" x2="' + cx + '" y2="' + (gridStartY + 20) +
+                  '" stroke="#E24B4A" stroke-width="1.5" marker-end="url(#arr)"/>';
+      }
+    }
+
+    // BMS zone rect
+    const bmsRect = bmsEndY > bmsStartY + 20 ?
+      '<rect x="' + caissonStartX + '" y="' + (bmsStartY + 4) +
+      '" width="' + caissonPxWidth + '" height="' + (bmsEndY - bmsStartY - 8) +
+      '" rx="3" fill="#f0f0f0" stroke="#cccccc" stroke-width="0.5" stroke-dasharray="4 3"/>' +
+      '<text x="' + (caissonStartX + caissonPxWidth / 2) + '" y="' + (bmsMidY) +
+      '" font-size="11" text-anchor="middle" fill="#888888"' +
+      ' font-family="Arial,sans-serif">' + f2(layout.depthSpare) + '" remaining depth</text>' +
+      '<text x="' + (caissonStartX + caissonPxWidth / 2) + '" y="' + (bmsMidY + 16) +
+      '" font-size="11" text-anchor="middle" fill="#888888"' +
+      ' font-family="Arial,sans-serif">BMS + wiring + fill weight</text>' : '';
+
+    // Bottom annotations y positions
+    const ba1y = compStartY + compPxDepth + 20;  // line
+    const ba1t = ba1y + 14;                       // label
+    const ba2y = ba1y + 30;
+    const ba2t = ba2y + 14;
+    const ba3y = ba2y + 30;
+    const ba3t = ba3y + 14;
+    const ba4y = ba3y + 30;
+    const ba4t = ba4y + 14;
+    const ba5y = ba4y + 28;
+    const ba5t = ba5y + 14;
+
+    // Right side annotations y positions
+    const ra1y1 = caissonStartY;
+    const ra1y2 = caissonStartY + packPxDepth;
+    const ra1ty = (ra1y1 + ra1y2) / 2 + 4;
+    const ra2y1 = caissonStartY;
+    const ra2y2 = bmsStartY;
+    const ra2ty = (ra2y1 + ra2y2) / 2 + 4;
+    const ra3y1 = bmsStartY;
+    const ra3y2 = bmsEndY;
+    const ra3ty = (ra3y1 + ra3y2) / 2 + 4;
+
+    return `
+<svg width="100%" viewBox="0 0 680 ${Math.round(svgHeight)}"
+     style="display:block;border:0.5px solid #ddd;border-radius:8px;background:#f8f8f8;margin-bottom:8px;">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="200" y="${titleY}" font-size="11" font-weight="500"
+        font-family="Arial,sans-serif" fill="#1a1a1a">
+    Top-down view — scale ${scaleD}px/inch (depth) × ${scaleW}px/inch (width)
+  </text>
+
+  <!-- Col labels -->
+  ${colLabels}
+
+  <!-- Compartment outline -->
+  <rect x="${compStartX}" y="${compStartY}"
+        width="${Math.round(compPxWidth)}" height="${Math.round(compPxDepth)}"
+        rx="4" fill="none" stroke="#888888" stroke-width="1.5" stroke-dasharray="5 3"/>
+
+  <!-- Caisson outline -->
+  <rect x="${Math.round(caissonStartX)}" y="${Math.round(caissonStartY)}"
+        width="${Math.round(caissonPxWidth)}" height="${Math.round(caissonPxDepth)}"
+        rx="3" fill="white" stroke="#378ADD" stroke-width="1" stroke-dasharray="3 2"/>
+
+  <!-- Clearance zones -->
+  <rect x="${compStartX}" y="${Math.round(caissonStartY)}"
+        width="${Math.round(clearancePxWidth)}" height="${Math.round(caissonPxDepth)}"
+        fill="#FFF3CD" opacity="0.5"/>
+  <rect x="${Math.round(caissonStartX + caissonPxWidth)}" y="${Math.round(caissonStartY)}"
+        width="${Math.round(clearancePxWidth)}" height="${Math.round(caissonPxDepth)}"
+        fill="#FFF3CD" opacity="0.5"/>
+  <text x="${compStartX + clearancePxWidth / 2}" y="${Math.round(compStartY + compPxDepth / 2)}"
+        font-size="9" text-anchor="middle" fill="#856404" font-family="Arial,sans-serif"
+        transform="rotate(-90,${compStartX + clearancePxWidth / 2},${Math.round(compStartY + compPxDepth / 2)})">
+    ${f2(layout.compWidth / 2 - layout.caissonWidth / 2)}" fill
+  </text>
+  <text x="${Math.round(caissonStartX + caissonPxWidth + clearancePxWidth / 2)}"
+        y="${Math.round(compStartY + compPxDepth / 2)}"
+        font-size="9" text-anchor="middle" fill="#856404" font-family="Arial,sans-serif"
+        transform="rotate(-90,${Math.round(caissonStartX + caissonPxWidth + clearancePxWidth / 2)},${Math.round(compStartY + compPxDepth / 2)})">
+    ${f2(layout.compWidth / 2 - layout.caissonWidth / 2)}" fill
+  </text>
+
+  <!-- Series direction labels (outside compartment) -->
+  <text x="${compStartX - 18}" y="${Math.round(compStartY + compPxDepth / 2)}"
+        font-size="10" text-anchor="middle" fill="#E24B4A" font-family="Arial,sans-serif"
+        transform="rotate(-90,${compStartX - 18},${Math.round(compStartY + compPxDepth / 2)})">
+    series ↓ (col 1)
+  </text>
+
+  <!-- Pack grid -->
+  ${packRects}
+
+  <!-- BMS zone -->
+  ${bmsRect}
+
+  <!-- Serpentine arrows -->
+  ${arrows}
+
+  <!-- Right side annotations -->
+  <line x1="${annoX}" y1="${ra1y1}" x2="${annoX}" y2="${ra1y2}"
+        stroke="#888888" stroke-width="0.5" marker-end="url(#arr)" marker-start="url(#arr)"/>
+  <text x="${annoX + 8}" y="${ra1ty}" font-size="10" fill="#555555"
+        font-family="Arial,sans-serif">${f2(layout.packDepth)}" / pack</text>
+
+  <line x1="${annoX + 20}" y1="${ra2y1}" x2="${annoX + 20}" y2="${ra2y2}"
+        stroke="#22863a" stroke-width="0.5" marker-end="url(#arr)" marker-start="url(#arr)"/>
+  <text x="${annoX + 28}" y="${ra2ty}" font-size="11" fill="#22863a"
+        font-family="Arial,sans-serif">${f2(layout.depthUsed)}" packs ✓</text>
+
+  ${layout.depthSpare > 0.5 ?
+    '<line x1="' + (annoX + 20) + '" y1="' + ra3y1 + '" x2="' + (annoX + 20) + '" y2="' + ra3y2 + '"' +
+    ' stroke="#888888" stroke-width="0.5" marker-end="url(#arr)" marker-start="url(#arr)"/>' +
+    '<text x="' + (annoX + 28) + '" y="' + ra3ty + '" font-size="11" fill="#555555"' +
+    ' font-family="Arial,sans-serif">' + f2(layout.depthSpare) + '" spare</text>' : ''}
+
+  <!-- Bottom annotations -->
+  <!-- Compartment width -->
+  <line x1="${compStartX}" y1="${ba1y}" x2="${compStartX + Math.round(compPxWidth)}" y2="${ba1y}"
+        stroke="#888888" stroke-width="0.5" marker-end="url(#arr)" marker-start="url(#arr)"/>
+  <text x="${compStartX + compPxWidth / 2}" y="${ba1t}" font-size="11" text-anchor="middle"
+        fill="#555555" font-family="Arial,sans-serif">
+    compartment ${f2(layout.compWidth)}" wide
+  </text>
+
+  <!-- Caisson width -->
+  <line x1="${Math.round(caissonStartX)}" y1="${ba2y}"
+        x2="${Math.round(caissonStartX + caissonPxWidth)}" y2="${ba2y}"
+        stroke="#378ADD" stroke-width="0.5" marker-end="url(#arr)" marker-start="url(#arr)"/>
+  <text x="${caissonStartX + caissonPxWidth / 2}" y="${ba2t}" font-size="11" text-anchor="middle"
+        fill="#378ADD" font-family="Arial,sans-serif">
+    caisson ${f2(layout.caissonWidth)}" (−${f2(layout.compWidth - layout.caissonWidth)}" clearance)
+  </text>
+
+  <!-- Packs width used -->
+  <line x1="${Math.round(gridStartX)}" y1="${ba3y}"
+        x2="${Math.round(gridStartX + gridPxWidth)}" y2="${ba3y}"
+        stroke="#22863a" stroke-width="0.5" marker-end="url(#arr)" marker-start="url(#arr)"/>
+  <text x="${gridStartX + gridPxWidth / 2}" y="${ba3t}" font-size="11" text-anchor="middle"
+        fill="#22863a" font-family="Arial,sans-serif">
+    ${f2(layout.widthUsed)}" packs used — ${f2(layout.widthSpare)}" spare ✓
+  </text>
+
+  <!-- Pack width -->
+  <line x1="${Math.round(gridStartX)}" y1="${ba4y}"
+        x2="${Math.round(gridStartX + packPxWidth)}" y2="${ba4y}"
+        stroke="#888888" stroke-width="0.5" marker-end="url(#arr)" marker-start="url(#arr)"/>
+  <text x="${gridStartX + packPxWidth / 2}" y="${ba4t}" font-size="10" text-anchor="middle"
+        fill="#555555" font-family="Arial,sans-serif">
+    ${f2(layout.packWidth)}" (1 pack = ${layout.cellsPerPack} cells × ${f2(cell.width)}")
+  </text>
+
+  <!-- Compartment depth (right side, vertical label) -->
+  <line x1="${compStartX + Math.round(compPxWidth) + 50}" y1="${compStartY}"
+        x2="${compStartX + Math.round(compPxWidth) + 50}" y2="${compStartY + Math.round(compPxDepth)}"
+        stroke="#888888" stroke-width="0.5" marker-end="url(#arr)" marker-start="url(#arr)"/>
+  <text x="${compStartX + Math.round(compPxWidth) + 62}"
+        y="${compStartY + compPxDepth / 2}"
+        font-size="11" text-anchor="middle" fill="#555555" font-family="Arial,sans-serif"
+        transform="rotate(90,${compStartX + Math.round(compPxWidth) + 62},${compStartY + compPxDepth / 2})">
+    compartment ${f2(layout.compDepth)}" deep
+  </text>
+</svg>`;
+  }
+
+  // ── FRONT VIEW SVG ────────────────────────────────────────────────────────
+  function buildFrontViewSVG() {
+    const cols = layout.cols;
+
+    // Scale: width 14px/inch, height 10px/inch
+    const scaleW = 12;
+    const scaleH = 8;
+
+    const packPxWidth  = layout.packWidth * scaleW;
+    const packPxHeight = layout.packHeight * scaleH;
+    const cellPxWidth  = cell.width * scaleW;
+    const compPxWidth  = layout.compWidth * scaleW;
+    const compPxHeight = layout.compHeight * scaleH;
+    const caissonPxWidth = layout.caissonWidth * scaleW;
+    const clearancePxWidth = (layout.compWidth - layout.caissonWidth) / 2 * scaleW;
+    const gridPxWidth  = cols * packPxWidth;
+    const remainPxHeight = (layout.compHeight - layout.packHeight) * scaleH;
+
+    const compStartX = 70;
+    const compStartY = 44;
+    const caissonStartX = compStartX + clearancePxWidth;
+    const gridStartX = caissonStartX;
+    const gridStartY = compStartY;
+
+    const bottomAnnotationsHeight = 180;
+    const svgHeight = compStartY + compPxHeight + bottomAnnotationsHeight + 40;
+
+    const colColors = [
+      { fill1: '#B5D4F4', fill2: '#85B7EB', stroke: '#185FA5', text: '#0C447C' },
+      { fill1: '#9FE1CB', fill2: '#5DCAA5', stroke: '#0F6E56', text: '#085041' },
+      { fill1: '#FAC775', fill2: '#EF9F27', stroke: '#854F0B', text: '#633806' }
+    ];
+
+    // Build pack columns
+    var packCols = '';
+    for (var c = 0; c < cols; c++) {
+      const colors  = colColors[c % 3];
+      const px      = gridStartX + c * packPxWidth;
+      const centerX = px + packPxWidth / 2;
+
+      // Individual cells
+      for (var ce = 0; ce < layout.cellsPerPack; ce++) {
+        const cx        = px + ce * cellPxWidth;
+        const fillColor = ce === 0 ? colors.fill1 : colors.fill2;
+        packCols += '<rect x="' + Math.round(cx) + '" y="' + gridStartY +
+                    '" width="' + Math.round(cellPxWidth) + '" height="' + Math.round(packPxHeight) +
+                    '" rx="2" fill="' + fillColor + '" stroke="' + colors.stroke + '" stroke-width="0.5"/>';
+        // Cell label
+        packCols += '<text x="' + Math.round(cx + cellPxWidth / 2) + '" y="' + Math.round(gridStartY + packPxHeight - 8) +
+                    '" font-size="9" text-anchor="middle" fill="' + colors.text +
+                    '" font-family="Arial,sans-serif">Cell ' + String.fromCharCode(65 + ce) + '</text>';
+      }
+      // Pack boundary
+      packCols += '<rect x="' + (Math.round(px) - 1) + '" y="' + (gridStartY - 1) +
+                  '" width="' + (Math.round(packPxWidth) + 2) + '" height="' + (Math.round(packPxHeight) + 2) +
+                  '" rx="3" fill="none" stroke="' + colors.stroke + '" stroke-width="2"/>';
+      // Pack label (col summary)
+      const path = layout.serpentinePath.path;
+      const firstPack = Math.min.apply(null, layout.serpentinePath.grid[c].filter(function(p) { return p !== null; }));
+      const lastPack  = Math.max.apply(null, layout.serpentinePath.grid[c].filter(function(p) { return p !== null; }));
+      packCols += '<text x="' + Math.round(centerX) + '" y="' + Math.round(gridStartY + packPxHeight / 2 - 6) +
+                  '" font-size="10" text-anchor="middle" fill="' + colors.text +
+                  '" font-family="Arial,sans-serif">Packs #' + firstPack + '–#' + lastPack + '</text>';
+      packCols += '<text x="' + Math.round(centerX) + '" y="' + Math.round(gridStartY + packPxHeight / 2 + 8) +
+                  '" font-size="9" text-anchor="middle" fill="' + colors.text +
+                  '" font-family="Arial,sans-serif">(col ' + (c + 1) + ')</text>';
+    }
+
+    // Remaining height zone
+    const remainY = gridStartY + Math.round(packPxHeight);
+    const remainMidY = remainY + remainPxHeight / 2;
+    const remainZone = remainPxHeight > 30 ?
+      '<rect x="' + Math.round(caissonStartX) + '" y="' + remainY +
+      '" width="' + Math.round(caissonPxWidth) + '" height="' + Math.round(remainPxHeight) +
+      '" rx="3" fill="#f0f0f0" stroke="#cccccc" stroke-width="0.5" stroke-dasharray="4 3"/>' +
+      '<text x="' + Math.round(caissonStartX + caissonPxWidth / 2) + '" y="' + Math.round(remainMidY - 8) +
+      '" font-size="11" text-anchor="middle" fill="#888888" font-family="Arial,sans-serif">' +
+      f2(layout.heightSpare) + '" remaining height</text>' +
+      '<text x="' + Math.round(caissonStartX + caissonPxWidth / 2) + '" y="' + Math.round(remainMidY + 8) +
+      '" font-size="11" text-anchor="middle" fill="#888888" font-family="Arial,sans-serif">' +
+      'cell terminals + BMS + structural frame</text>' : '';
+
+    // Bottom annotations
+    const ba1y = compStartY + Math.round(compPxHeight) + 20;
+    const ba1t = ba1y + 14;
+    const ba2y = ba1y + 30; const ba2t = ba2y + 14;
+    const ba3y = ba2y + 30; const ba3t = ba3y + 14;
+    const ba4y = ba3y + 30; const ba4t = ba4y + 14;
+    const ba5y = ba4y + 28; const ba5t = ba5y + 14;
+
+    // Right side: cell height and remaining height
+    const annoX = compStartX + Math.round(compPxWidth) + 20;
+    const cellHeightY2 = gridStartY + Math.round(packPxHeight);
+    const cellHeightMid = gridStartY + Math.round(packPxHeight) / 2 + 4;
+    const compHeightMid = compStartY + Math.round(compPxHeight) / 2 + 4;
+
+    return `
+<svg width="100%" viewBox="0 0 680 ${Math.round(svgHeight)}"
+     style="display:block;border:0.5px solid #ddd;border-radius:8px;background:#f8f8f8;margin-bottom:8px;">
+  <defs>
+    <marker id="arr2" viewBox="0 0 10 10" refX="8" refY="5"
+            markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke"
+            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="260" y="16" font-size="11" font-weight="500"
+        font-family="Arial,sans-serif" fill="#1a1a1a">
+    Front view — compartment ${f2(layout.compWidth)}" wide × ${f2(layout.compHeight)}" tall
+    · scale ${scaleW}px/inch (W) × ${scaleH}px/inch (H)
+  </text>
+
+  <!-- Col labels -->
+  ${(function() {
+    var labels = '';
+    for (var c = 0; c < cols; c++) {
+      const cx = gridStartX + c * packPxWidth + packPxWidth / 2;
+      labels += '<text x="' + Math.round(cx) + '" y="34" font-size="11" text-anchor="middle"' +
+                ' font-weight="500" fill="#1a1a1a" font-family="Arial,sans-serif">Col ' + (c + 1) + '</text>';
+    }
+    return labels;
+  })()}
+
+  <!-- Compartment outline -->
+  <rect x="${compStartX}" y="${compStartY}"
+        width="${Math.round(compPxWidth)}" height="${Math.round(compPxHeight)}"
+        rx="4" fill="none" stroke="#888888" stroke-width="1.5" stroke-dasharray="5 3"/>
+
+  <!-- Clearance zones -->
+  <rect x="${compStartX}" y="${compStartY}"
+        width="${Math.round(clearancePxWidth)}" height="${Math.round(compPxHeight)}"
+        fill="#FFF3CD" opacity="0.4"/>
+  <rect x="${Math.round(caissonStartX + caissonPxWidth)}" y="${compStartY}"
+        width="${Math.round(clearancePxWidth)}" height="${Math.round(compPxHeight)}"
+        fill="#FFF3CD" opacity="0.4"/>
+  <text x="${compStartX + clearancePxWidth / 2}" y="${compStartY + compPxHeight / 2}"
+        font-size="9" text-anchor="middle" fill="#856404" font-family="Arial,sans-serif"
+        transform="rotate(-90,${compStartX + clearancePxWidth / 2},${compStartY + compPxHeight / 2})">
+    ${f2((layout.compWidth - layout.caissonWidth) / 2)}" fill
+  </text>
+  <text x="${Math.round(caissonStartX + caissonPxWidth + clearancePxWidth / 2)}"
+        y="${compStartY + compPxHeight / 2}"
+        font-size="9" text-anchor="middle" fill="#856404" font-family="Arial,sans-serif"
+        transform="rotate(-90,${Math.round(caissonStartX + caissonPxWidth + clearancePxWidth / 2)},${compStartY + compPxHeight / 2})">
+    ${f2((layout.compWidth - layout.caissonWidth) / 2)}" fill
+  </text>
+
+  <!-- Caisson outline -->
+  <rect x="${Math.round(caissonStartX)}" y="${compStartY}"
+        width="${Math.round(caissonPxWidth)}" height="${Math.round(compPxHeight)}"
+        rx="2" fill="none" stroke="#378ADD" stroke-width="1" stroke-dasharray="3 2"/>
+
+  <!-- Pack columns -->
+  ${packCols}
+
+  <!-- Remaining height zone -->
+  ${remainZone}
+
+  <!-- Right side annotations -->
+  <line x1="${annoX}" y1="${gridStartY}" x2="${annoX}" y2="${cellHeightY2}"
+        stroke="#22863a" stroke-width="0.5"
+        marker-end="url(#arr2)" marker-start="url(#arr2)"/>
+  <text x="${annoX + 8}" y="${cellHeightMid}" font-size="11" fill="#22863a"
+        font-family="Arial,sans-serif">${f2(layout.heightUsed)}" cells ✓</text>
+
+  ${remainPxHeight > 20 ?
+    '<line x1="' + (annoX) + '" y1="' + cellHeightY2 + '" x2="' + annoX + '" y2="' + (compStartY + Math.round(compPxHeight)) + '"' +
+    ' stroke="#888888" stroke-width="0.5" marker-end="url(#arr2)" marker-start="url(#arr2)"/>' +
+    '<text x="' + (annoX + 8) + '" y="' + (cellHeightY2 + remainPxHeight / 2 + 4) + '"' +
+    ' font-size="11" fill="#555555" font-family="Arial,sans-serif">' + f2(layout.heightSpare) + '" spare</text>' : ''}
+
+  <line x1="${annoX + 20}" y1="${compStartY}" x2="${annoX + 20}" y2="${compStartY + Math.round(compPxHeight)}"
+        stroke="#888888" stroke-width="0.5"
+        marker-end="url(#arr2)" marker-start="url(#arr2)"/>
+  <text x="${annoX + 28}" y="${compHeightMid}" font-size="11" fill="#555555"
+        font-family="Arial,sans-serif">${f2(layout.compHeight)}" tall</text>
+
+  <!-- Bottom annotations -->
+  <line x1="${compStartX}" y1="${ba1y}"
+        x2="${compStartX + Math.round(compPxWidth)}" y2="${ba1y}"
+        stroke="#888888" stroke-width="0.5"
+        marker-end="url(#arr2)" marker-start="url(#arr2)"/>
+  <text x="${compStartX + compPxWidth / 2}" y="${ba1t}" font-size="11"
+        text-anchor="middle" fill="#555555" font-family="Arial,sans-serif">
+    compartment ${f2(layout.compWidth)}" wide
+  </text>
+
+  <line x1="${Math.round(caissonStartX)}" y1="${ba2y}"
+        x2="${Math.round(caissonStartX + caissonPxWidth)}" y2="${ba2y}"
+        stroke="#378ADD" stroke-width="0.5"
+        marker-end="url(#arr2)" marker-start="url(#arr2)"/>
+  <text x="${caissonStartX + caissonPxWidth / 2}" y="${ba2t}" font-size="11"
+        text-anchor="middle" fill="#378ADD" font-family="Arial,sans-serif">
+    caisson ${f2(layout.caissonWidth)}" (−${f2(layout.compWidth - layout.caissonWidth)}" clearance)
+  </text>
+
+  <line x1="${Math.round(gridStartX)}" y1="${ba3y}"
+        x2="${Math.round(gridStartX + gridPxWidth)}" y2="${ba3y}"
+        stroke="#22863a" stroke-width="0.5"
+        marker-end="url(#arr2)" marker-start="url(#arr2)"/>
+  <text x="${gridStartX + gridPxWidth / 2}" y="${ba3t}" font-size="11"
+        text-anchor="middle" fill="#22863a" font-family="Arial,sans-serif">
+    ${f2(layout.widthUsed)}" packs used — ${f2(layout.widthSpare)}" spare ✓
+  </text>
+
+  <line x1="${Math.round(gridStartX)}" y1="${ba4y}"
+        x2="${Math.round(gridStartX + packPxWidth)}" y2="${ba4y}"
+        stroke="#888888" stroke-width="0.5"
+        marker-end="url(#arr2)" marker-start="url(#arr2)"/>
+  <text x="${gridStartX + packPxWidth / 2}" y="${ba4t}" font-size="10"
+        text-anchor="middle" fill="#555555" font-family="Arial,sans-serif">
+    ${f2(layout.packWidth)}" (1 pack)
+  </text>
+
+  <line x1="${Math.round(gridStartX)}" y1="${ba5y}"
+        x2="${Math.round(gridStartX + cellPxWidth)}" y2="${ba5y}"
+        stroke="#888888" stroke-width="0.5"
+        marker-end="url(#arr2)" marker-start="url(#arr2)"/>
+  <text x="${gridStartX + cellPxWidth / 2}" y="${ba5t}" font-size="10"
+        text-anchor="middle" fill="#555555" font-family="Arial,sans-serif">
+    ${f2(cell.width)}" cell
+  </text>
+
+  ${layout.cellsPerPack > 1 ?
+    '<line x1="' + Math.round(gridStartX + cellPxWidth) + '" y1="' + ba5y + '"' +
+    ' x2="' + Math.round(gridStartX + packPxWidth) + '" y2="' + ba5y + '"' +
+    ' stroke="#888888" stroke-width="0.5"' +
+    ' marker-end="url(#arr2)" marker-start="url(#arr2)"/>' +
+    '<text x="' + Math.round(gridStartX + cellPxWidth + cellPxWidth / 2) + '" y="' + ba5t + '"' +
+    ' font-size="10" text-anchor="middle" fill="#555555" font-family="Arial,sans-serif">' +
+    f2(cell.width) + '" cell B</text>' : ''}
+
+</svg>`;
+  }
+
+  // ── PAGE 1: SUMMARY ───────────────────────────────────────────────────────
+  const page1 = `
+<div class="page">
+  <h1>VeloxCustom — Internal Battery Assessment</h1>
+  <h2>${params.forklift_manufacturer || ''} ${params.forklift_model || ''} · ${layout.voltage}V</h2>
+
+  <div class="section-title">Forklift Information</div>
+  <table class="spec-table">
+    <tr><td class="label">Dealer</td><td>${params.dealer || '—'}</td>
+        <td class="label">Customer</td><td>${params.customer || '—'}</td></tr>
+    <tr><td class="label">Manufacturer</td><td>${params.forklift_manufacturer || '—'}</td>
+        <td class="label">Model</td><td>${params.forklift_model || '—'}</td></tr>
+    <tr><td class="label">Voltage</td><td>${layout.voltage}V</td>
+        <td class="label">Compartment</td><td>${compartment}</td></tr>
+    <tr><td class="label">Shifts</td><td>${params.shifts || '—'} × ${params.shift_duration || 8}h</td>
+        <td class="label">Use type</td><td>${params.use_type || 'average'}</td></tr>
+  </table>
+
+  <div class="section-title">Ghost Simulation Result</div>
+  <table class="spec-table">
+    <tr><td class="label">Target Ah</td><td>${ghostResult.targetAh}Ah</td>
+        <td class="label">Charger</td><td>${ghostResult.chargerAmps}A (${ghostResult.chargerModel || '—'})</td></tr>
+    <tr><td class="label">Max efficiency</td><td>${ghostResult.maxEff}%</td>
+        <td class="label">Work hours</td><td>${ghostResult.workHours}</td></tr>
+    <tr><td class="label">SOC minimum</td><td>${ghostResult.results ? Math.round(ghostResult.results.min_soc || 0) : '—'}%</td>
+        <td class="label">Result</td><td class="pass">✓ PASS</td></tr>
+  </table>
+
+  <div class="section-title">Custom Battery Specification</div>
+  <table class="spec-table">
+    <tr><td class="label">Battery label</td><td class="highlight">VeloxCustom ${layout.voltage}V ${layout.achievedAh}Ah</td>
+        <td class="label">Cell type</td><td>${cell.name}</td></tr>
+    <tr><td class="label">Cells per pack</td><td>${layout.cellsPerPack} (parallel)</td>
+        <td class="label">Pack capacity</td><td>${layout.packAh}Ah @ ${cell.voltage}V</td></tr>
+    <tr><td class="label">Total cell-packs</td><td>${layout.totalPacks} (series)</td>
+        <td class="label">Total cells</td><td>${layout.totalCells}</td></tr>
+    <tr><td class="label">Layout</td><td>${layout.cols} cols × ${layout.rows} rows</td>
+        <td class="label">Wiring</td><td>Serpentine</td></tr>
+  </table>
+
+  <div class="section-title">Caisson Dimensions (after clearance)</div>
+  <table class="spec-table">
+    <tr><td class="label">Compartment (L×W×H)</td><td>${f2(layout.compDepth)}" × ${f2(layout.compWidth)}" × ${f2(layout.compHeight)}"</td>
+        <td class="label">Clearance depth</td><td>${CAISSON_CLEARANCE_DEPTH}"</td></tr>
+    <tr><td class="label">Caisson available</td>
+        <td>${f2(layout.caissonDepth)}" deep × ${f2(layout.caissonWidth)}" wide × ${f2(layout.compHeight)}" tall</td>
+        <td class="label">Clearance width</td><td>${CAISSON_CLEARANCE_WIDTH}" (total)</td></tr>
+    <tr><td class="label">Depth used / spare</td><td class="pass">${f2(layout.depthUsed)}" / ${f2(layout.depthSpare)}" ✓</td>
+        <td class="label">Width used / spare</td><td class="pass">${f2(layout.widthUsed)}" / ${f2(layout.widthSpare)}" ✓</td></tr>
+    <tr><td class="label">Height used / spare</td><td class="pass">${f2(layout.heightUsed)}" / ${f2(layout.heightSpare)}" ✓</td>
+        <td class="label">BMS / wiring space</td><td>${f2(layout.depthSpare)}" depth available</td></tr>
+  </table>
+
+  <div class="section-title">Serpentine Wiring Path</div>
+  <div class="path-box">${pathStr}</div>
+</div>`;
+
+  // ── PAGE 2: TOP-DOWN VIEW ─────────────────────────────────────────────────
+  const page2 = `
+<div class="page">
+  <h2>Top-down view — ${layout.cols} columns × ${layout.rows} rows</h2>
+  <p class="sub">Looking into the compartment from above. Depth axis = vertical (going into forklift). Width axis = horizontal.</p>
+  <div class="svg-wrap">${buildFrontViewSVG()}</div>
+  <div class="legend">
+    <span class="leg-item"><span class="swatch" style="background:#B5D4F4;border:1px solid #378ADD;"></span> Col 1 cell A</span>
+    <span class="leg-item"><span class="swatch" style="background:#85B7EB;border:1px solid #378ADD;"></span> Col 1 cell B</span>
+    <span class="leg-item"><span class="swatch" style="background:#9FE1CB;border:1px solid #1D9E75;"></span> Col 2 cell A</span>
+    <span class="leg-item"><span class="swatch" style="background:#5DCAA5;border:1px solid #1D9E75;"></span> Col 2 cell B</span>
+    <span class="leg-item"><span class="swatch" style="background:#FAC775;border:1px solid #BA7517;"></span> Col 3 cell A</span>
+    <span class="leg-item"><span class="swatch" style="background:#EF9F27;border:1px solid #BA7517;"></span> Col 3 cell B</span>
+    <span class="leg-item"><span class="swatch" style="background:#FFF3CD;border:1px solid #856404;"></span> Fill / clearance</span>
+    <span class="leg-item"><span style="color:#E24B4A;font-weight:500;">→</span> Series path</span>
+  </div>
+</div>`;
+
+  // ── PAGE 3: FRONT VIEW ────────────────────────────────────────────────────
+  const page3 = `
+<div class="page">
+  <h2>Front view — packs standing upright</h2>
+  <p class="sub">Looking straight into the compartment opening. Width axis = horizontal. Height axis = vertical. Cells stand upright — height is rarely a constraint.</p>
+  <div class="svg-wrap">${buildFrontViewSVG()}</div>
+  <div class="dim-summary">
+    <div class="dim-card">
+      <div class="dim-label">Width axis</div>
+      <div class="dim-line">Compartment: ${f2(layout.compWidth)}"</div>
+      <div class="dim-line">Clearance: −${f2(layout.compWidth - layout.caissonWidth)}" → caisson ${f2(layout.caissonWidth)}"</div>
+      <div class="dim-line">Packs used: ${f2(layout.widthUsed)}"</div>
+      <div class="dim-pass">Spare: ${f2(layout.widthSpare)}" ✓</div>
+    </div>
+    <div class="dim-card">
+      <div class="dim-label">Depth axis</div>
+      <div class="dim-line">Compartment: ${f2(layout.compDepth)}"</div>
+      <div class="dim-line">Clearance: −${CAISSON_CLEARANCE_DEPTH}" → caisson ${f2(layout.caissonDepth)}"</div>
+      <div class="dim-line">Packs used: ${f2(layout.depthUsed)}"</div>
+      <div class="dim-pass">Spare: ${f2(layout.depthSpare)}" ✓</div>
+    </div>
+    <div class="dim-card">
+      <div class="dim-label">Height axis</div>
+      <div class="dim-line">Compartment: ${f2(layout.compHeight)}"</div>
+      <div class="dim-line">No clearance needed</div>
+      <div class="dim-line">Cells standing: ${f2(layout.heightUsed)}"</div>
+      <div class="dim-pass">Spare: ${f2(layout.heightSpare)}" ✓</div>
+    </div>
+  </div>
+</div>`;
+
+  // ── FULL HTML DOCUMENT ────────────────────────────────────────────────────
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; font-size: 12px;
+         color: #1a1a1a; background: white; padding: 24px; }
+  h1 { font-size: 18px; font-weight: 600; margin-bottom: 4px; color: #1a1a1a; }
+  h2 { font-size: 14px; font-weight: 500; margin-bottom: 12px; color: #444444; }
+  .page { margin-bottom: 0; page-break-after: always; page-break-inside: avoid; }
+  .svg-wrap { page-break-inside: avoid; }
+  .page:last-child { page-break-after: avoid; }
+  .section-title { font-size: 11px; font-weight: 600; color: #555555;
+                   text-transform: uppercase; letter-spacing: 0.5px;
+                   margin: 16px 0 6px; border-bottom: 0.5px solid #dddddd;
+                   padding-bottom: 4px; }
+  .spec-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+  .spec-table td { padding: 5px 8px; border: 0.5px solid #eeeeee;
+                   vertical-align: top; line-height: 1.5; }
+  .spec-table .label { font-weight: 500; color: #555555;
+                       width: 18%; background: #fafafa; }
+  .pass { color: #22863a; font-weight: 500; }
+  .highlight { color: #0550ae; font-weight: 600; }
+  .sub { font-size: 11px; color: #666666; margin-bottom: 10px; line-height: 1.6; }
+  .path-box { background: #f6f8fa; border: 0.5px solid #dddddd;
+              border-radius: 4px; padding: 10px 14px;
+              font-family: monospace; font-size: 11px;
+              color: #E24B4A; line-height: 1.8; word-break: break-all; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px;
+            margin-top: 10px; font-size: 11px; }
+  .leg-item { display: flex; align-items: center; gap: 5px; }
+  .swatch { display: inline-block; width: 14px; height: 14px;
+            border-radius: 2px; flex-shrink: 0; }
+  .dim-summary { display: grid; grid-template-columns: repeat(3, 1fr);
+                 gap: 12px; margin-top: 14px; }
+  .dim-card { background: #f6f8fa; border: 0.5px solid #dddddd;
+              border-radius: 6px; padding: 12px; }
+  .dim-label { font-size: 11px; font-weight: 600; color: #555555;
+               margin-bottom: 6px; text-transform: uppercase;
+               letter-spacing: 0.5px; }
+  .dim-line { font-size: 11px; color: #666666; margin-bottom: 3px; }
+  .dim-pass { font-size: 11px; color: #22863a; font-weight: 500; margin-top: 4px; }
+</style>
+</head>
+<body>
+  ${page1}
+  ${page2}
+  ${page3}
+</body>
+</html>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEST FUNCTION — saves HTML to Drive for preview
+// ─────────────────────────────────────────────────────────────────────────────
+
+function testCustomBatteryHTML_AMOD() {
+  // Minimal params for A-MOD test
+  const params = {
+    dealer:                'Leavitt Machinery',
+    customer:              'Leavitt Industrial',
+    forklift_manufacturer: 'LINDE',
+    forklift_model:        'A-MOD',
+    voltage:               48,
+    shifts:                2,
+    shift_duration:        8,
+    use_type:              'average',
+    shift_start_hour:      7
+  };
+
+  // Build a mock ghost result using the real calculator
+  const layout = calculateCustomBattery('47.90 x 16.75 x 30.88', 48, 450);
+  if (!layout) {
+    Logger.log('testCustomBatteryHTML_AMOD: no layout found — aborting');
+    return;
+  }
+
+  const mockGhostResult = {
+    layout:       layout,
+    targetAh:     450,
+    achievedAh:   layout.achievedAh,
+    chargerAmps:  250,
+    chargerModel: 'IHF-GE0-64803-80/250E',
+    maxEff:       82,
+    workHours:    '11h28',
+    results:      { min_soc: 21, status: 'PASS', battery_used_pct: 205 },
+    chargingEvents: []
+  };
+
+  const html = generateCustomBatteryHTML(params, mockGhostResult);
+
+  // Save HTML to Drive for preview
+  const folder = DriveApp.getFolderById('1j1ADg0s02dKVdcCoGOZQl9IbCWt7k7Ba');
+  const file   = folder.createFile('DEBUG_CustomBattery_AMOD.html', html, 'text/html');
+  Logger.log('HTML saved: ' + file.getUrl());
+
+  // Also render to PDF via Cloud Run
+  const response = UrlFetchApp.fetch(
+    'https://velox-pdf-service-414761682351.us-central1.run.app/generate-pdf',
+    {
+      method:      'post',
+      contentType: 'application/json',
+      payload:     JSON.stringify({ html: html }),
+      muteHttpExceptions: true
+    }
+  );
+
+  if (response.getResponseCode() === 200) {
+    const blob = response.getBlob().setContentType('application/pdf');
+    blob.setName('DEBUG_CustomBattery_AMOD.pdf');
+    folder.createFile(blob);
+    Logger.log('PDF saved to Drive');
+  } else {
+    Logger.log('Cloud Run error: ' + response.getResponseCode() + ' — ' +
+               response.getContentText().substring(0, 200));
+  }
+}

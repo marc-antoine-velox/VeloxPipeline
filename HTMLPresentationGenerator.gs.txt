@@ -1,0 +1,1466 @@
+// ============================================================
+// HTMLPresentationGenerator.gs — Velox Power Systems
+// HTML → PDF presentation generator
+// Drop-in replacement for PresentationGenerator.gs
+// Switch in pipeline: set USE_HTML_PDF = true
+// ============================================================
+
+const HTML_PRES = {
+  porteesFolderId:  '1j1ADg0s02dKVdcCoGOZQl9IbCWt7k7Ba',
+  assetsFolderId:   '15Ab4OksbNC-SQVnsN9kBtRs38ipF__Or',
+  staticFrFolderId: '1JNJg5_8DKAhMI6FMQf1HFTNa21s42Q7i',
+  staticEnFolderId: '1apgu77RwBTEXbGpZcjPgaIRw88ATbmYh',
+  forkliftFolderId: '19GHEXKlYx_Ste7N7IFyx7hpY2BM9kqol',
+  logsSheetId:      '1Nv6OZ1-3afIrsyZ4E0MtQ7oA4xZ7QDToMqFhhAFAdD4'
+};
+
+// ============================================================
+// MAIN ENTRY — called from pipeline instead of buildPorteePDFBlob
+// Returns the PDF blob immediately (no deferred trigger needed)
+// ============================================================
+function buildHTMLPortee(params, allSimResults, allSimScreenshots) {
+  try {
+    const simEntries = _htmlBuildSimEntries(allSimResults, allSimScreenshots, params);
+    if (simEntries.length === 0) {
+      Logger.log('HTMLPortee: no sim entries, skipping');
+      return null;
+    }
+
+    const dealer    = params.dealer || '';
+    const model     = params.forklift_model || '';
+    const voltage   = params.voltage || '';
+    const lang      = (params.language || 'fr').toUpperCase();
+    const isEN      = lang === 'EN';
+    const shiftLabel = (params.shifts || 2) + 'x' + (params.shift_duration || 8) + 'h';
+    const title     = (isEN ? 'Scope_' : 'Portée_') + dealer + '_' + model + '_' + voltage + 'V_' + shiftLabel;
+
+    // Load assets as base64
+    const veloxLogoB64   = _htmlLoadAssetB64('VELOX_LOGO.png');
+    const dealerLogoB64  = _htmlLoadDealerLogoB64(dealer);
+    const forkliftB64    = _htmlLoadForkliftB64(model, params.forklift_manufacturer || '');
+
+    // Load static slides as base64 images
+    const staticSlides   = _htmlLoadStaticSlides(lang);
+
+    // Build full HTML document
+    const html = _htmlBuildDocument({
+      params, simEntries, isEN, title,
+      veloxLogoB64, dealerLogoB64, forkliftB64, staticSlides
+    });
+
+    // Convert to PDF via Drive API
+    const pdfBlob = _htmlConvertToPDF(html, title);
+    if (!pdfBlob) {
+      Logger.log('HTMLPortee: PDF conversion failed');
+      return null;
+    }
+
+    // Save to Portées folder (with per-dealer subfolder)
+    const folder   = _htmlGetDealerFolder(dealer);
+    const pdfFile  = folder.createFile(pdfBlob);
+    Logger.log('HTMLPortee saved: ' + title + ' (' + pdfBlob.getBytes().length + ' bytes)');
+
+    // Write PDF ID to LOGS
+    try {
+      const logsSheet = SpreadsheetApp.openById(HTML_PRES.logsSheetId).getSheetByName('LOGS');
+      const lastRow   = logsSheet.getLastRow();
+      const heads     = logsSheet.getRange(1, 1, 1, logsSheet.getLastColumn()).getValues()[0];
+      const col       = heads.indexOf('Portée PDF ID') + 1;
+      if (col > 0 && lastRow > 1) logsSheet.getRange(lastRow, col).setValue(pdfFile.getId());
+    } catch(e) { Logger.log('LOGS write error: ' + e.message); }
+
+    return pdfBlob;
+
+  } catch(e) {
+    Logger.log('buildHTMLPortee error: ' + e.message + '\n' + e.stack);
+    return null;
+  }
+}
+
+
+// ============================================================
+// PDF CONVERSION
+// ============================================================
+function _htmlConvertToPDF(htmlString, title) {
+  try {
+    const serviceUrl = 'https://velox-pdf-service-414761682351.us-central1.run.app/generate-pdf';
+
+    const response = UrlFetchApp.fetch(serviceUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      payload: JSON.stringify({ html: htmlString }),
+      muteHttpExceptions: true
+    });
+
+    if (response.getResponseCode() !== 200) {
+      Logger.log('Cloud Run error: ' + response.getContentText().substring(0, 300));
+      return null;
+    }
+
+    return response.getBlob()
+      .setContentType('application/pdf')
+      .setName(title + '.pdf');
+
+  } catch(e) {
+    Logger.log('_htmlConvertToPDF error: ' + e.message);
+    return null;
+  }
+}
+
+
+// ============================================================
+// DOCUMENT BUILDER — assembles all slides into one HTML page
+// ============================================================
+function _htmlBuildDocument(ctx) {
+  const { params, simEntries, isEN, title,
+          veloxLogoB64, dealerLogoB64, forkliftB64, staticSlides } = ctx;
+
+  const slides = [];
+
+  // 1. Cover slide — manual asset override first, then Clearbit, then Puppeteer
+  let clientLogoB64 = null;
+  if (params.customer) {
+    try {
+      const manualLogo = _htmlLoadAssetB64('CLIENT_' + params.customer + '.png');
+      if (manualLogo) {
+        clientLogoB64 = manualLogo;
+        Logger.log('Client logo: manual asset found for ' + params.customer);
+      }
+    } catch(e) {
+      Logger.log('Client logo: manual asset check failed — ' + e.message);
+    }
+  }
+  if (!clientLogoB64 && (params.customer_domain || params.customer)) {
+    // ── Try Clearbit first ────────────────────────────────────────────────
+    try {
+      const clearbitResp = UrlFetchApp.fetch(
+        'https://logo.clearbit.com/' + params.customer_domain,
+        { muteHttpExceptions: true }
+      );
+      if (clearbitResp.getResponseCode() === 200) {
+        clientLogoB64 = Utilities.base64Encode(clearbitResp.getBlob().getBytes());
+        Logger.log('Client logo: Clearbit hit for ' + params.customer_domain);
+      }
+    } catch(e) {
+      Logger.log('Client logo: Clearbit failed for ' + params.customer_domain);
+    }
+
+    // ── Use Cloud Run Puppeteer logo scraper if Clearbit failed ───────────
+    if (!clientLogoB64) {
+      try {
+        const logoResp = UrlFetchApp.fetch(
+          'https://velox-pdf-service-414761682351.us-central1.run.app/get-logo',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            payload: JSON.stringify({ 
+  domain: params.customer_domain || '',
+  company_name: params.customer || ''
+}),
+            muteHttpExceptions: true
+          }
+        );
+        if (logoResp.getResponseCode() === 200) {
+          const logoData = JSON.parse(logoResp.getContentText());
+          if (logoData.logo) {
+            clientLogoB64 = logoData.logo;
+            Logger.log('Client logo: Puppeteer scraped from ' + params.customer_domain + ' | url: ' + logoData.url);
+          }
+        } else {
+          Logger.log('Client logo: Puppeteer scraper returned ' + logoResp.getResponseCode() + ' for ' + params.customer_domain);
+        }
+      } catch(e) {
+        Logger.log('Client logo: Puppeteer scraper error — ' + e.message);
+      }
+    }
+  }
+  slides.push(_htmlCoverSlide(params, isEN, veloxLogoB64, dealerLogoB64, forkliftB64, clientLogoB64));
+
+  // 2. Static marketing slides
+  staticSlides.forEach(function(b64) {
+    slides.push(_htmlStaticSlide(b64));
+  });
+
+  // 3. Sim + Conclusion pairs
+  simEntries.forEach(function(entry, i) {
+    slides.push(_htmlSimSlide(entry, params, i + 1, isEN));
+    slides.push(_htmlConclusionSlide(entry, params, i + 1, isEN));
+  });
+
+  return _htmlWrapDocument(title, slides);
+}
+
+function _htmlWrapDocument(title, slides) {
+  return '<!DOCTYPE html><html><head><meta charset="UTF-8">' +
+    '<title>' + _esc(title) + '</title>' +
+    '<style>' +
+    '* { box-sizing: border-box; margin: 0; padding: 0; }' +
+    'body { background: #000; font-family: Arial, sans-serif; }' +
+    '.slide {' +
+    '  width: 720px; height: 405px;' +
+    '  position: relative; overflow: hidden;' +
+    '  background: #4C576A;' +
+    '  page-break-after: always;' +
+    '  page-break-inside: avoid;' +
+    '}' +
+    '.slide:last-child { page-break-after: auto; }' +
+    '@page { size: 720px 405px; margin: 0; }' +
+    '</style></head><body>' +
+    slides.join('\n') +
+    '</body></html>';
+}
+
+
+// ============================================================
+// SHARED HEADER HTML
+// ============================================================
+function _htmlHeader(leftLabel, rightLabel, isEN) {
+  const sub = isEN
+    ? 'YOUR FUTURE-READY FORKLIFT ENERGY ECOSYSTEM'
+    : 'VOTRE ÉCOSYSTÈME D\'ÉNERGIE DE CHARIOT ÉLÉVATEUR PRÊT POUR L\'AVENIR';
+  return '<div style="position:absolute;top:0;left:0;width:720px;height:48px;' +
+    'background:#2e3a4a;z-index:10;">' +
+    // Centered title
+    '<div style="position:absolute;left:0;right:0;top:5px;text-align:center;line-height:1;">' +
+    '<span style="font-size:18px;font-weight:900;letter-spacing:2px;color:#66BFD4;">VELOX</span>' +
+    '<span style="font-size:18px;font-weight:900;letter-spacing:2px;color:#fff;"> ECOSYSTEM</span>' +
+    '</div>' +
+    // Subtitle
+    '<div style="position:absolute;left:0;right:0;top:27px;text-align:center;' +
+    'font-size:6px;color:rgba(255,255,255,0.6);letter-spacing:0.09em;white-space:nowrap;">' + sub + '</div>' +
+    // Left label
+    '<div style="position:absolute;left:13px;bottom:6px;font-size:10px;color:#ccd8e8;font-weight:700;">' +
+    _esc(leftLabel) + '</div>' +
+    // Right badge
+    '<div style="position:absolute;right:11px;bottom:6px;background:#0d1e2c;border-radius:4px;' +
+    'padding:3px 10px;font-size:9px;color:#66BFD4;font-weight:600;border:1px solid #1e3a50;">' +
+    _esc(rightLabel) + '</div>' +
+    '</div>';
+}
+
+
+// ============================================================
+// COVER SLIDE — Fixed: dealer logo larger, forklift larger,
+//               layout doesn't overlap header
+// ============================================================
+function _htmlCoverSlide(params, isEN, veloxLogoB64, dealerLogoB64, forkliftB64, clientLogoB64) {
+  // Load the small Battelec icon for the bottom-right badge
+  const battSmallB64 = _htmlLoadAssetB64('Batt_Small_Cover_Logo.png');
+  const dealer       = params.dealer || '';
+  const mfr          = params.forklift_manufacturer || '';
+  const model        = params.forklift_model || '';
+  const voltage      = params.voltage || '';
+  const modelDisplay = (mfr ? mfr + ' ' : '') + model;
+  const pillLine1    = (isEN ? 'Scope: ' : 'Portée: ') + (dealer || '–') + ' –';
+  const pillLine2    = params.customer ? (params.customer + ' –') : '';
+  const shiftCount   = params.shifts || 2;
+const shiftSuffix  = isEN
+  ? shiftCount + ' shift' + (shiftCount > 1 ? 's' : '')
+  : shiftCount + ' quart' + (shiftCount > 1 ? 's' : '');
+const pillLine3    = modelDisplay + ' ' + voltage + 'V – ' + shiftSuffix;
+
+  const disc = isEN
+    ? 'Disclaimer: The information in this document\nis confidential and intended solely for the\nspecified recipient(s). It is strictly prohibited\nto share or distribute any part of this\npresentation without prior authorization.\nIf you have received this document in error,\nplease inform the sender immediately\nand delete it from your system.'
+    : 'Avertissement : Les informations dans ce\ndocument sont confidentielles et destinées\nexclusivement au(x) destinataire(s) spécifique(s).\nIl est strictement interdit de partager ou\ndistribuer toute partie de cette présentation\nsans autorisation préalable. Si vous avez reçu\nce document par erreur, veuillez en informer\nl\'expéditeur et le supprimer de votre système.';
+
+  const bg = 'background:radial-gradient(ellipse at 30% 40%, #7a8ba0 0%, #5a6a80 30%, #4a5a70 55%, #3a4a5e 80%, #2e3a50 100%);';
+
+  return '<div class="slide" style="' + bg + 'overflow:hidden;">' +
+
+    // ── CLIENT LOGO — top left (only when client logo available)
+    (clientLogoB64 ?
+      '<img src="data:image/png;base64,' + clientLogoB64 + '" ' +
+      'style="position:absolute;left:85px;top:15px;width:120px;height:auto;object-fit:contain;z-index:5;">'
+    : '') +
+
+    // ── DEALER LOGO — original size when no client, smaller centered when client present
+    (dealerLogoB64 ?
+      '<img src="data:image/png;base64,' + dealerLogoB64 + '" ' +
+      'style="position:absolute;' +
+      (clientLogoB64
+        ? 'left:40px;top:-50px;width:650px;height:auto;object-fit:contain;' // ← client logo IS present
+        : 'left:-180px;top:-110px;width:650px;height:auto;') + // ← client logo NOT present
+      'z-index:5;">'
+    : '') +
+
+    // ── GREY CIRCLE — decorative, bleeds off left edge
+    '<div style="position:absolute;left:-50px;top:20px;' +
+    'width:380px;height:380px;' +
+    'background:#556278;border-radius:50%;opacity:0.6;"></div>' +
+
+    // ── FORKLIFT — large, left side, overlapping circle
+    // NOTE: position works well for standard forklifts (Linde, Crown, Toyota)
+    // Tall/narrow forklifts (Raymond reach trucks) may need adjustment in future
+    (forkliftB64 ?
+      '<img src="data:image/png;base64,' + forkliftB64 + '" ' +
+      'style="position:absolute;left:-220px;top:60px;width:740px;z-index:2;">'
+    : '') +
+
+    // ── VELOX LOGO — 
+   (veloxLogoB64 ?
+      '<img src="data:image/png;base64,' + veloxLogoB64 + '" ' +
+      'style="position:absolute;' +
+      (clientLogoB64
+        ? 'right:-170px;top:50px;width:600px;height:auto;object-fit:contain;'
+        : 'right:-170px;top:30px;width:650px;') +
+      'z-index:3;">'
+    : '') +
+
+    // ── DISCLAIMER — right column, sits between Velox logo and red pill
+    // Bottom of disclaimer aligns with bottom of red pill at ~bottom:60px
+    // ── DISCLAIMER — anchored from bottom, last line aligns with red pill bottom
+    // bottom:120px = red pill height(~60px) + pill bottom(60px) = sits just above pill
+    '<div style="position:absolute;right:-90px;bottom:60px;width:280px;font-size:7.5px;' +
+    'color:#c8d4e0;line-height:1.55;white-space:pre-line;">' + _esc(disc) + '</div>' +
+
+    // ── RED PILL — middle right, above badge
+    '<div style="position:absolute;left:290px;bottom:60px;width:230px;' +
+    'background:#8B1A1A;border-radius:8px;padding:14px 18px;z-index:4;">' +
+    '<div style="font-size:13px;color:#fff;font-weight:700;line-height:1.5;">' +
+    _esc(pillLine1) + '<br>' + (pillLine2 ? _esc(pillLine2) + '<br>' : '') + _esc(pillLine3) + '</div></div>' +
+
+    // ── BATTELEC.COM BADGE — bottom right
+    // Uses Batt_Small_Cover_Logo.png if available, falls back to red square
+    '<div style="position:absolute;right:16px;bottom:14px;' +
+    'display:flex;align-items:center;gap:6px;z-index:4;">' +
+    (battSmallB64
+      ? '<img src="data:image/png;base64,' + battSmallB64 + '" style="height:24px;width:auto;">'
+      : '<div style="width:20px;height:20px;background:#cc2200;border-radius:3px;' +
+        'display:flex;align-items:center;justify-content:center;">' +
+        '<div style="width:11px;height:11px;border:2.5px solid #fff;border-radius:1px;"></div></div>'
+    ) +
+    '<span style="font-size:14px;color:#fff;font-weight:700;letter-spacing:0.05em;">BATTELEC.COM</span>' +
+    '</div>' +
+
+    '</div>';
+}
+
+
+// ============================================================
+// STATIC SLIDE (marketing slides from Drive)
+// ============================================================
+function _htmlStaticSlide(b64) {
+  return '<div class="slide">' +
+    '<img src="data:image/png;base64,' + b64 + '" ' +
+    'style="position:absolute;top:0;left:0;width:720px;height:405px;object-fit:cover;">' +
+    '</div>';
+}
+
+
+// ============================================================
+// SIMULATION SLIDE
+// ============================================================
+function _htmlSimSlide(entry, params, simNum, isEN) {
+  const s   = entry.shifts || 1;
+  const hps = entry.motorHoursPerShift || 0;
+  const h1  = Math.floor(hps), m1 = Math.round((hps - h1) * 60);
+  const perShift  = h1 + 'h' + (m1 < 10 ? '0' : '') + m1;
+  const totalHps  = hps * s;
+  const h2 = Math.floor(totalHps), m2 = Math.round((totalHps - h2) * 60);
+  const totalWork = h2 + 'h' + (m2 < 10 ? '0' : '') + m2;
+
+  // Metric pills
+  const pills = [
+    { val: totalWork,                        lbl: isEN ? 'total / day'  : 'total / jour' },
+    { val: perShift,                         lbl: isEN ? '/ shift'      : '/ quart' },
+    { val: entry.batteryAh + ' Ah',          lbl: 'Velox' + entry.batteryModel },
+    { val: entry.chargerAmps + ' A',         lbl: 'Omni' },
+    { val: (entry.efficiency || 0) + '%',    lbl: isEN ? 'efficiency'   : 'efficacité' },
+    { val: (entry.truckLoad || 0) + ' A/hm', lbl: isEN ? 'consumption' : 'consommation' }
+  ];
+
+  const pillsHtml = pills.map(function(p) {
+    return '<div style="flex:1;height:20px;background:rgba(102,191,212,0.12);' +
+      'border:0.5px solid rgba(102,191,212,0.3);border-radius:10px;' +
+      'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:0 4px;">' +
+      '<span style="font-size:9px;font-weight:700;color:#fff;line-height:1;text-align:center;">' + _esc(p.val) + '</span>' +
+      '<span style="font-size:7px;color:rgba(255,255,255,0.7);line-height:1;text-align:center;">' + _esc(p.lbl) + '</span>' +
+      '</div>';
+  }).join('');
+
+  // Config rows
+  const dur = entry.shift_duration || 8;
+  const cfgRows = [
+    [isEN ? 'Battery'         : 'Batterie',       'Velox' + entry.batteryModel + ' ' + entry.batteryAh + 'Ah'],
+    [isEN ? 'Charger'         : 'Chargeur',        entry.chargerAmps + 'A'],
+    ['Voltage',                                    (entry.voltage || params.voltage || '') + 'V'],
+    [isEN ? 'Consumption'     : 'Consommation',    (entry.truckLoad || '') + ' A/hm'],
+    [isEN ? 'Shifts'          : 'Nb de quarts',    String(s)],
+    [isEN ? 'Duration / shift': 'Durée / quart',   dur + 'h'],
+    [isEN ? 'Charge / shift'  : 'Charge/quart',    (entry.chargeMinPerShift || 0) + ' min'],
+    [isEN ? 'Work / shift'    : 'Travail/quart',   perShift],
+    ['SOC minimum',                                Math.round(entry.minSoc || 0) + '%'],
+    [isEN ? 'Ah used'         : 'Ah utilisé',      (entry.totalAh || 0) + ' Ah']
+  ];
+
+  const cfgHtml = cfgRows.map(function(r) {
+    return '<div style="display:flex;justify-content:space-between;align-items:center;' +
+      'padding:0.5px 0;border-bottom:0.5px solid rgba(255,255,255,0.05);">' +
+      '<span style="font-size:6.5px;color:rgba(255,255,255,0.65);">' + _esc(r[0]) + '</span>' +
+      '<span style="font-size:7px;color:#fff;font-weight:700;">' + _esc(r[1]) + '</span>' +
+      '</div>';
+  }).join('');
+
+  // Shift schedule rows
+  const shiftTimes = entry.shiftTimes || [];
+  const shiftHtml = shiftTimes.map(function(st) {
+    return '<div style="display:flex;justify-content:space-between;align-items:center;' +
+      'padding:0.5px 0;border-bottom:0.5px solid rgba(255,255,255,0.05);">' +
+      '<span style="font-size:6.5px;color:#8899aa;">' + _esc(st.label) + '</span>' +
+      '<span style="font-size:7px;color:#fff;font-weight:700;">' + _esc(st.time) + '</span>' +
+      '</div>';
+  }).join('');
+
+  // Charge schedule — grouped by shift
+  const chargeColsHtml = _htmlChargeColumns(entry, isEN);
+
+  // SOC screenshot
+  const socHtml = (entry.screenshot && Array.isArray(entry.screenshot))
+    ? _htmlSOCChart(entry.screenshot, entry.chargingEvents || [])
+    : '<div style="color:#8899aa;font-size:11px;font-weight:700;text-align:center;padding-top:40%;">SOC chart unavailable</div>';
+
+  const leftLabel  = isEN ? 'Work Simulation' : 'Simulation de Travail';
+  const rightLabel = (isEN ? 'Simulation ' : 'Simulation ') + simNum;
+  const simBgStyle = 'background:radial-gradient(ellipse at 30% 40%, #7a8ba0 0%, #5a6a80 30%, #4a5a70 55%, #3a4a5e 80%, #2e3a50 100%);';
+
+  return '<div class="slide" style="' + simBgStyle + '">' +
+
+    _htmlHeader(leftLabel, rightLabel, isEN) +
+
+    // Metric strip
+    '<div style="position:absolute;top:48px;left:0;width:720px;height:28px;' +
+    'background:rgba(0,0,0,0.22);display:flex;align-items:center;padding:0 8px;gap:6px;">' +
+    pillsHtml + '</div>' +
+
+    // ── LEFT PANEL ────────────────────────────────────────────────────────
+    // Fixed 180px wide, dark background, contains:
+    //   - Configuration rows (battery, charger, voltage, etc.)
+    //   - Shift schedule (S1/S2/S3 windows)
+    //   - Charge schedule (S1/S2/S3 charge event boxes)
+    '<div style="position:absolute;top:76px;left:0;width:180px;bottom:0;' +
+    'background:rgba(0,0,0,0.15);padding:4px 6px;overflow:hidden;' +
+    'border-right:1px solid rgba(255,255,255,0.1);">' +
+
+    // Configuration section header
+    '<div style="font-size:6.5px;color:#66BFD4;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;margin-bottom:1px;">' +
+    (isEN ? 'Configuration' : 'Configuration') + '</div>' +
+    cfgHtml +
+
+    '<div style="height:0.5px;background:rgba(255,255,255,0.08);margin:3px 0;"></div>' +
+
+    // Shift schedule section header
+    '<div style="font-size:6.5px;color:#66BFD4;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;margin-bottom:1px;">' +
+    (isEN ? 'Shift Schedule' : 'Horaire des Quarts') + '</div>' +
+    shiftHtml +
+
+    '<div style="height:0.5px;background:rgba(255,255,255,0.08);margin:3px 0;"></div>' +
+
+    // Charge schedule section header + S1/S2/S3 boxes
+    '<div style="font-size:6.5px;color:#66BFD4;letter-spacing:0.1em;text-transform:uppercase;font-weight:700;margin-bottom:1px;">' +
+    (isEN ? 'Charge Schedule' : 'Horaire de Charge') + '</div>' +
+    chargeColsHtml +
+
+    '</div>' +
+
+    // ── SOC CHART ZONE ────────────────────────────────────────────────────
+    // Outer div: dark #2e3a4a background fills the full right area
+    // This gives an 8px dark margin on top, right, bottom edges
+    // so the white card never touches the slide border
+    '<div style="position:absolute;top:76px;left:180px;right:0;bottom:0;background:#2e3a4a;">' +
+
+    // Inner div: white card with teal border, inset 8px on all sides
+    // The SVG chart (526x313px) renders inside this card
+    '<div style="position:absolute;top:8px;left:6px;right:8px;bottom:8px;' +
+    'border:1.5px solid #66BFD4;border-radius:3px;overflow:hidden;background:#fff;">' +
+    socHtml +
+    '</div>' + // end white card
+
+    '</div>' + // end chart zone
+
+    '</div>'; // end slide
+}
+
+
+// ============================================================
+// CONCLUSION SLIDE
+// ============================================================
+function _htmlConclusionSlide(entry, params, simNum, isEN) {
+  const mfr   = (params.forklift_manufacturer || '').toUpperCase();
+  const model = params.forklift_model || '';
+  const brandModel = (mfr ? mfr + ' ' : '') + model;
+  const volt  = entry.voltage || params.voltage || '';
+
+  const spec = (isEN ? 'Battery ' : 'Batterie ') + 'Velox' + entry.batteryModel + ' ' + entry.batteryAh + 'Ah' +
+               '  ·  ' + (isEN ? 'Charger ' : 'Chargeur ') + 'Omni ' + entry.chargerAmps + 'A  ·  ' + volt + 'V';
+
+  // Conclusion text (short, clean)
+  const concText = _htmlConclusionText(entry, params, isEN);
+
+  // Charge columns
+  const chargeColsHtml = _htmlChargeColumns(entry, isEN);
+
+  // Stat cards
+  const s   = entry.shifts || 1;
+  const hps = entry.motorHoursPerShift || 0;
+  const h_  = Math.floor(hps), m_ = Math.round((hps - h_) * 60);
+  const perShift = h_ + 'h' + (m_ < 10 ? '0' : '') + m_;
+  const annual   = Math.round(s * hps * 5 * 52).toLocaleString('en-CA');
+
+  // Charge minutes from events
+  let chargeMin = 0;
+  if (entry.chargingEvents && entry.chargingEvents.length > 0) {
+    const shiftLabels = ['s1', 's2', 's3'];
+    let totalPerShift = 0;
+    let shiftsFound = new Set();
+    entry.chargingEvents.forEach(function(e) {
+      const lbl = (e.label || '').toLowerCase();
+      if (lbl === 'pre-shift charge' || lbl === 'post-shift charge' || lbl === 'overnight charge') return;
+      let sm = _htmlTimeToFloat(e.start_time) * 60;
+      let em = _htmlTimeToFloat(e.end_time) * 60;
+      if (em <= sm) em = 1440;
+      totalPerShift += (em - sm);
+      // Track which shift this event belongs to
+      for (let i = 0; i < shiftLabels.length; i++) {
+        if (lbl.startsWith(shiftLabels[i])) { shiftsFound.add(shiftLabels[i]); break; }
+      }
+    });
+    const divisor = shiftsFound.size > 0 ? shiftsFound.size : (entry.shifts || 1);
+    chargeMin = Math.round(totalPerShift / divisor);
+  } else {
+    chargeMin = entry.chargeMinPerShift || 60;
+  }
+
+  const statCards = [
+    { val: perShift,           lbl: isEN ? 'per shift'      : 'par quart de travail' },
+    { val: annual + ' h',      lbl: isEN ? 'hours / year'   : 'heures / année' },
+    { val: chargeMin + ' min', lbl: isEN ? 'charge / shift' : 'charge / quart' }
+  ];
+
+  const statHtml = statCards.map(function(sc) {
+    return '<div style="background:rgba(0,0,0,0.25);border-radius:3px;padding:7px 10px;' +
+      'border-left:3px solid #66BFD4;margin-bottom:6px;">' +
+      '<div style="font-size:17px;color:#fff;font-weight:700;line-height:1;">' + _esc(sc.val) + '</div>' +
+      '<div style="font-size:6.5px;color:#fff;opacity:0.55;text-transform:uppercase;letter-spacing:0.04em;margin-top:2px;">' + _esc(sc.lbl) + '</div>' +
+      '</div>';
+  }).join('');
+
+  // kWh chart SVG
+  const kwhSvg = _htmlKwhChartSVG(entry, isEN);
+
+  // Battery timeline SVG
+  const timelineSvg = _htmlTimelineSVG(entry, isEN);
+
+  const leftLabel  = 'Conclusion';
+  const rightLabel = (isEN ? 'Simulation ' : 'Simulation ') + simNum;
+  const concBgStyle = 'background:radial-gradient(ellipse at 30% 40%, #7a8ba0 0%, #5a6a80 30%, #4a5a70 55%, #3a4a5e 80%, #2e3a50 100%);';
+
+  return '<div class="slide" style="' + concBgStyle + '">' +
+
+    _htmlHeader(leftLabel, rightLabel, isEN) +
+
+    // Body
+    '<div style="position:absolute;top:52px;left:8px;right:8px;bottom:6px;display:flex;gap:10px;">' +
+
+    // LEFT COLUMN
+    '<div style="width:392px;flex-shrink:0;display:flex;flex-direction:column;">' +
+    '<div style="font-size:22px;font-weight:900;color:#fff;line-height:1.05;margin-bottom:3px;">' + _esc(brandModel) + '</div>' +
+    '<div style="font-size:9px;color:#fff;font-weight:600;margin-bottom:5px;opacity:0.75;">' + _esc(spec) + '</div>' +
+    '<div style="height:0.5px;background:#3a5060;margin-bottom:6px;"></div>' +
+
+    // Conclusion text
+    '<div style="font-size:11px;color:#fff;line-height:1.65;margin-bottom:6px;opacity:0.88;">' + concText + '</div>' +
+
+    // Charges per shift
+    '<div style="font-size:7px;color:#fff;font-weight:700;margin-bottom:2px;letter-spacing:0.08em;opacity:0.9;">' +
+    (isEN ? 'CHARGES PER SHIFT' : 'RECHARGES PAR QUART') + '</div>' +
+    '<div style="font-size:6px;">' + chargeColsHtml + '</div>' +
+
+    '<div style="height:0.5px;background:#3a5060;margin:5px 0;"></div>' +
+
+    // Timeline
+    '<div style="font-size:7px;color:#fff;font-weight:700;margin-bottom:4px;letter-spacing:0.08em;">' +
+    'BATTERY TIMELINE</div>' +
+    timelineSvg +
+
+    '</div>' + // end left
+
+    // RIGHT COLUMN
+    '<div style="flex:1;display:flex;flex-direction:column;">' +
+    statHtml +
+    '<div style="flex:1;display:flex;flex-direction:column;min-height:0;">' +
+    '<div style="font-size:7px;color:#fff;font-weight:700;margin-bottom:3px;opacity:0.7;letter-spacing:0.06em;">' +
+    (isEN ? 'ENERGY (DAY), kWh' : 'ÉNERGIE (JOUR), kWh') + '</div>' +
+    kwhSvg +
+    '</div>' +
+    '</div>' + // end right
+
+    '</div>' + // end body
+    '</div>';
+}
+
+
+// ============================================================
+// CHARGE COLUMNS HTML (shared by sim + conclusion slides)
+// ============================================================
+function _htmlChargeColumns(entry, isEN) {
+  // ── INPUTS ────────────────────────────────────────────────────────────────
+  // entry.chargingEvents : array of {start_time, end_time, label} from pipeline
+  // entry.shifts         : number of shifts (1, 2, or 3)
+  // isEN                 : language flag (unused here but kept for consistency)
+  const events = entry.chargingEvents || [];
+  const s      = entry.shifts || 1;
+
+  // ── STEP 1: Initialize one bucket per shift (S1, S2, S3) ─────────────────
+  const groups = {};
+  for (let i = 1; i <= s; i++) groups['S' + i] = [];
+
+  if (events.length > 0) {
+    // ── STEP 2A: Filter out non-working-hour events ───────────────────────
+    // Pre-shift, post-shift, and overnight charges are not shown in the
+    // charge schedule columns — only break/lunch/dinner events are shown
+    const workOnly = events.filter(function(e) {
+      const lbl = (e.label || '').toLowerCase();
+      return lbl !== 'overnight charge' &&
+             lbl !== 'pre-shift charge' &&
+             lbl !== 'post-shift charge';
+    });
+
+    // ── STEP 3A: Distribute events evenly across shifts ───────────────────
+    // Events are stored sequentially (S1 events first, then S2, then S3)
+    // so we slice them into equal chunks — one chunk per shift
+    const perShift = Math.ceil(workOnly.length / s);
+    for (let i = 1; i <= s; i++) {
+      const start = (i - 1) * perShift;
+      groups['S' + i] = workOnly.slice(start, start + perShift);
+    }
+  } else {
+    // ── STEP 2B: Fallback if no chargingEvents — use legacy schedule ──────
+    // Some older sim entries may not have chargingEvents populated,
+    // so we fall back to entry.schedule which uses different field names
+    const sched = entry.schedule || [];
+    const perShift = Math.ceil(sched.length / s);
+    for (let i = 1; i <= s; i++) {
+      const start = (i - 1) * perShift;
+      groups['S' + i] = sched.slice(start, start + perShift).map(function(ev) {
+        // Normalize field names: schedule uses startTime/endTime (camelCase)
+        // but chargingEvents uses start_time/end_time (snake_case)
+        return { start_time: ev.startTime, end_time: ev.endTime };
+      });
+    }
+  }
+
+  // ── STEP 4: Render one box per shift, stacked vertically ─────────────────
+  // Each box has:
+  //   - A teal shift label (S1 / S2 / S3)
+  //   - One line per charge event showing start – end time
+  //   - A left border accent + subtle background to visually separate shifts
+  return '<div style="display:flex;flex-direction:column;gap:3px;margin-top:0px;">' +
+    Object.keys(groups).map(function(shiftKey) {
+      // Build one time row per event in this shift
+      const times = groups[shiftKey].map(function(e) {
+        return '<div style="font-size:7px;color:#ccd8e8;line-height:1.5;white-space:nowrap;">' +
+          _esc((e.start_time || e.startTime || '') + ' – ' + (e.end_time || e.endTime || '')) +
+          '</div>';
+      }).join('');
+
+      // Render the shift box
+      return '<div style="background:rgba(255,255,255,0.04);border-radius:3px;padding:2px 4px;' +
+        'border-left:2px solid rgba(102,191,212,0.4);">' +
+        // Shift label (S1 / S2 / S3) in teal
+        '<div style="font-size:6.5px;color:#66BFD4;font-weight:700;margin-bottom:2px;">' + shiftKey + '</div>' +
+        // Time rows
+        times +
+        '</div>';
+    }).join('') +
+    '</div>';
+}
+
+// ============================================================
+// CONCLUSION TEXT
+// ============================================================
+function _htmlConclusionText(entry, params, isEN) {
+  const s      = entry.shifts || 1;
+  const dur    = entry.shift_duration || 8;
+ let startH = 7; // fallback
+
+  // 3-shift and 2x12h operations always start at midnight
+  const is24h = (entry.shifts === 3 && (entry.shift_duration || 8) === 8) ||
+                (entry.shifts === 2 && (entry.shift_duration || 8) === 12);
+  if (is24h) {
+    startH = 0;
+  } else if (entry.chargingEvents && entry.chargingEvents.length > 0) {
+    const preShift = entry.chargingEvents.find(function(e) {
+      return e.type === 'pre_shift' || e.label === 'Pre-Shift Charge';
+    });
+    if (preShift) {
+      startH = _htmlTimeToFloat(preShift.end_time) % 24;
+    } else if (entry.shift_start_hour !== undefined && entry.shift_start_hour !== null) {
+      startH = entry.shift_start_hour;
+    }
+  } else if (entry.shift_start_hour !== undefined && entry.shift_start_hour !== null) {
+    startH = entry.shift_start_hour;
+  }
+  function fh(h) {
+    const hh = ((h % 24) + 24) % 24;
+    if (hh === 0 || hh === 12) return '12h';
+    return hh + 'h';
+  }
+
+  const useType  = (params.use_type || 'average').toLowerCase();
+  const useLabel = useType === 'heavy'    ? (isEN ? 'heavy'    : 'lourde')
+                 : useType === 'moderate' ? (isEN ? 'moderate' : 'modérée')
+                 : (isEN ? 'average' : 'moyenne');
+
+  const shiftWord = isEN
+    ? s + ' shift' + (s > 1 ? 's' : '') + ' of ' + dur + 'h'
+    : s + ' quart' + (s > 1 ? 's' : '') + ' de ' + dur + 'h';
+
+  const b = function(txt) { return '<strong style="color:#fff;">' + txt + '</strong>'; };
+
+  let shiftWindowStr = '';
+  if (s === 1) {
+    const endH = startH + dur;
+    shiftWindowStr = ' (' + b(fh(startH)) + '→' + b(fh(endH)) + ')';
+  } else {
+    function fhFull(h) {
+      const hh = ((h % 24) + 24) % 24;
+      if (hh === 0)  return '12AM';
+      if (hh === 12) return '12PM';
+      if (hh < 12)   return hh + 'AM';
+      return (hh - 12) + 'PM';
+    }
+    const windows = [];
+    for (let i = 0; i < s; i++) {
+      const ws = (startH + i * dur) % 24;
+      const we = ws + dur;
+      windows.push(fhFull(ws) + '→' + fhFull(we));
+    }
+    shiftWindowStr = ' (' + windows.map(function(w) { return b(w); }).join(', ') + ')';
+  }
+
+  if (isEN) {
+    return 'Minimum ' + b(entry.chargerAmps + 'A') + ' charger required.<br>' +
+           b(shiftWord) + shiftWindowStr + '<br>' +
+           useLabel + ' consumption at ' + b((entry.truckLoad || 0) + ' A/hm') + '.';
+  } else {
+    return 'Chargeur minimum ' + b(entry.chargerAmps + 'A') + ' requis.<br>' +
+           b(shiftWord) + shiftWindowStr + '<br>' +
+           'consommation ' + useLabel + ' à ' + b((entry.truckLoad || 0) + ' A/hm') + '.';
+  }
+}
+
+
+// ============================================================
+// BATTERY TIMELINE SVG
+// ============================================================
+function _htmlTimelineSVG(entry, isEN) {
+  const W = 384, H = 72;
+  const labelW = 36, trackX = labelW + 6, trackW = W - trackX - 2;
+
+  const shiftStart = (entry.shift_start_hour !== undefined && entry.shift_start_hour !== null)
+                     ? entry.shift_start_hour : 7;
+  const shiftDur    = entry.shift_duration || 8;
+  const numShifts   = entry.shifts || 1;
+  const efficiency  = (entry.efficiency || 80) / 100;
+  const events      = entry.chargingEvents || [];
+
+  // Parse charge segments from actual events
+  const chargeSegs = events.map(function(e) {
+    let s = _htmlTimeToFloat(e.start_time);
+    let en = _htmlTimeToFloat(e.end_time);
+    if (en <= s) en = 24;
+    return { start: s, end: en };
+  }).filter(function(seg) {
+    // Exclude pre-shift and overnight from timeline charge segments
+    // to avoid misrepresenting non-working hours as "charge" on the bars
+    return true; // keep all — the idle gap logic handles non-shift hours
+  });
+
+  // Build ALL shift windows across 24h
+  const allShiftWindows = [];
+  for (var i = 0; i < numShifts; i++) {
+    var start = (shiftStart + i * shiftDur) % 24;
+    var end   = start + shiftDur;
+    allShiftWindows.push({ start: start, end: end });
+  }
+
+  // For each shift window, subtract charge events to get non-charge periods
+    // Then distribute work vs idle across the full shift proportionally
+    const workSegs = [], idleSegs = [];
+    allShiftWindows.forEach(function(window) {
+      var periods = [{ start: window.start, end: window.end }];
+      chargeSegs.forEach(function(cs) {
+        var newP = [];
+        periods.forEach(function(sp) {
+          if (cs.end <= sp.start || cs.start >= sp.end) { newP.push(sp); return; }
+          if (cs.start > sp.start) newP.push({ start: sp.start, end: cs.start });
+          if (cs.end < sp.end)     newP.push({ start: cs.end,   end: sp.end });
+        });
+        periods = newP;
+      });
+      // Total non-charge time in this shift
+      var totalAvail = periods.reduce(function(sum, sp) { return sum + (sp.end - sp.start); }, 0);
+      var totalWork  = totalAvail * efficiency;
+      var workLeft   = totalWork;
+      // Fill work first, then idle, across periods in order
+      periods.forEach(function(sp) {
+        var dur = sp.end - sp.start;
+        if (workLeft >= dur) {
+          workSegs.push({ start: sp.start, end: sp.end });
+          workLeft -= dur;
+        } else if (workLeft > 0.05) {
+          workSegs.push({ start: sp.start, end: sp.start + workLeft });
+          idleSegs.push({ start: sp.start + workLeft, end: sp.end });
+          workLeft = 0;
+        } else {
+          idleSegs.push({ start: sp.start, end: sp.end });
+        }
+      });
+    });
+
+  // Idle outside all shift windows (gaps between shifts and before/after)
+  function isInsideAnyShift(h) {
+    return allShiftWindows.some(function(w) { return h >= w.start && h < w.end; });
+  }
+  function fillIdleGap(from, to) {
+    var cur = from;
+    var relevant = chargeSegs.filter(function(cs) { return cs.start < to && cs.end > from; })
+                              .sort(function(a,b){ return a.start - b.start; });
+    relevant.forEach(function(c) {
+      if (c.start > cur) idleSegs.push({ start: cur, end: c.start });
+      cur = Math.max(cur, c.end);
+    });
+    if (cur < to) idleSegs.push({ start: cur, end: to });
+  }
+  // Find non-shift, non-charge gaps across 24h
+  var covered = allShiftWindows.slice().sort(function(a,b){ return a.start-b.start; });
+  var pos = 0;
+  covered.forEach(function(w) {
+    if (w.start > pos) fillIdleGap(pos, w.start);
+    pos = w.end;
+  });
+  if (pos < 24) fillIdleGap(pos, 24);
+
+  function segsToRects(segs, rowY, color) {
+    return segs.map(function(seg) {
+      const sx = trackX + (seg.start / 24) * trackW;
+      const sw = Math.max(((seg.end - seg.start) / 24) * trackW, 0.5);
+      return '<rect x="' + sx.toFixed(1) + '" y="' + (rowY + 1) + '" width="' + sw.toFixed(1) +
+             '" height="11" fill="' + color + '" rx="1"/>';
+    }).join('');
+  }
+
+  const rows = [
+    { label: isEN ? 'Work' : 'Travail', segs: workSegs,   color: '#4CAF50', y: 2  },
+    { label: 'Charge',                   segs: chargeSegs,  color: '#E2764A', y: 19 },
+    { label: isEN ? 'Idle' : 'Inactif', segs: idleSegs,    color: '#3a5068', y: 36 }
+  ];
+
+  let svg = '<svg width="' + W + '" height="' + H + '" style="display:block;flex-shrink:0;">';
+
+  rows.forEach(function(rd) {
+    svg += '<text x="' + (labelW) + '" y="' + (rd.y + 11) + '" font-size="7" fill="#fff" ' +
+           'text-anchor="end" font-family="Arial" font-weight="600" opacity="0.8">' + rd.label + '</text>';
+    svg += '<rect x="' + trackX + '" y="' + rd.y + '" width="' + trackW + '" height="13" ' +
+           'fill="rgba(255,255,255,0.05)" rx="1"/>';
+    svg += segsToRects(rd.segs, rd.y, rd.color);
+  });
+
+  // Axis line
+  svg += '<line x1="' + trackX + '" y1="50" x2="' + (trackX + trackW) + '" y2="50" ' +
+         'stroke="rgba(255,255,255,0.1)" stroke-width="0.5"/>';
+
+  // Hour labels
+  const hours = [12,1,2,3,4,5,6,7,8,9,10,11,12,1,2,3,4,5,6,7,8,9,10,11];
+  hours.forEach(function(lbl, hh) {
+    const lx = trackX + (hh / 24) * trackW;
+    const isMidnight = hh === 0, isNoon = hh === 12;
+    const opacity = (isMidnight || isNoon) ? '1' : '0.7';
+    svg += '<text x="' + lx.toFixed(1) + '" y="56" font-size="5.5" fill="#fff" ' +
+           'text-anchor="middle" font-family="Arial" opacity="' + opacity + '">' + lbl + '</text>';
+    if (isMidnight) svg += '<text x="' + lx.toFixed(1) + '" y="62" font-size="4.5" fill="#fff" text-anchor="middle" font-family="Arial" opacity="0.5">AM</text>';
+    if (isNoon)     svg += '<text x="' + lx.toFixed(1) + '" y="62" font-size="4.5" fill="#fff" text-anchor="middle" font-family="Arial" opacity="0.5">PM</text>';
+  });
+
+  // Legend
+  const legItems = [
+    { color: '#4CAF50', lbl: isEN ? 'Work'   : 'Travail' },
+    { color: '#E2764A', lbl: 'Charge' },
+    { color: '#3a5068', lbl: isEN ? 'Idle'   : 'Inactif' }
+  ];
+  let legX = trackX;
+  legItems.forEach(function(li) {
+    svg += '<rect x="' + legX + '" y="57" width="8" height="8" fill="' + li.color + '" rx="1"/>';
+    svg += '<text x="' + (legX + 10) + '" y="64" font-size="6.5" fill="#fff" ' +
+           'font-family="Arial" opacity="0.6">' + li.lbl + '</text>';
+    legX += 50;
+  });
+
+  svg += '</svg>';
+  return svg;
+}
+
+
+// ============================================================
+// KWH CHART SVG
+// ============================================================
+function _htmlKwhChartSVG(entry, isEN) {
+  const totalAh  = entry.total_ah_raw || 0;
+  const voltN    = parseFloat(entry.voltage_num || entry.voltage || 36);
+  const consumed = Math.round(totalAh * voltN / 100) / 10;
+  const received = Math.round(consumed * 1.008 * 10) / 10;
+  const maxVal   = Math.max(received, consumed);
+  const step     = maxVal <= 20 ? 5 : maxVal <= 50 ? 10 : maxVal <= 100 ? 15 : 20;
+  const ceiling  = Math.ceil((maxVal + step) / step) * step;
+
+  const chartH = 84, axisW = 22, W = 288, H = 108;
+  const barAreaX = axisW, barAreaW = W - axisW;
+  const pad  = barAreaW * 0.1;
+  const barW = (barAreaW - pad * 3) / 2;
+
+  let svg = '<svg width="100%" height="100%" viewBox="0 0 ' + W + ' ' + H + '" ' +
+            'preserveAspectRatio="xMidYMid meet" style="flex:1;">';
+
+  // Grid lines + Y labels
+  for (let v = 0; v <= ceiling; v += step) {
+    const gy = chartH - (v / ceiling) * chartH;
+    svg += '<line x1="' + axisW + '" y1="' + gy.toFixed(1) + '" x2="' + W + '" y2="' + gy.toFixed(1) +
+           '" stroke="rgba(255,255,255,' + (v === 0 ? '0.15' : '0.06') + ')" stroke-width="0.5"/>';
+    svg += '<text x="' + (axisW - 2) + '" y="' + (gy + 4).toFixed(1) + '" font-size="5.5" fill="#fff" ' +
+           'text-anchor="end" font-family="Arial" opacity="0.45">' + v + '</text>';
+  }
+
+  // Bars
+  const bars = [
+    { val: received, color: '#E2764A', x: barAreaX + pad },
+    { val: consumed, color: '#4a7ab5', x: barAreaX + pad * 2 + barW }
+  ];
+  bars.forEach(function(b) {
+    const bh  = (b.val / ceiling) * chartH;
+    const bby = chartH - bh;
+    svg += '<rect x="' + b.x.toFixed(1) + '" y="' + bby.toFixed(1) + '" width="' + barW.toFixed(1) +
+           '" height="' + bh.toFixed(1) + '" fill="' + b.color + '" rx="1"/>';
+    svg += '<text x="' + (b.x + barW / 2).toFixed(1) + '" y="' + (bby + 14).toFixed(1) +
+           '" font-size="10" fill="#fff" font-weight="bold" text-anchor="middle" font-family="Arial">' +
+           b.val.toFixed(1) + '</text>';
+  });
+
+  // Legend
+  const legY = chartH + 6;
+  svg += '<rect x="' + (barAreaX + pad).toFixed(1) + '" y="' + legY + '" width="8" height="7" fill="#E2764A" rx="1"/>';
+  svg += '<text x="' + (barAreaX + pad + 10).toFixed(1) + '" y="' + (legY + 6) + '" font-size="6" fill="#fff" font-family="Arial" opacity="0.6">' +
+         (isEN ? 'Received' : 'Reçue') + '</text>';
+  svg += '<rect x="' + (barAreaX + pad * 2 + barW).toFixed(1) + '" y="' + legY + '" width="8" height="7" fill="#4a7ab5" rx="1"/>';
+  svg += '<text x="' + (barAreaX + pad * 2 + barW + 10).toFixed(1) + '" y="' + (legY + 6) +
+         '" font-size="6" fill="#fff" font-family="Arial" opacity="0.6">' +
+         (isEN ? 'Consumed' : 'Consommée') + '</text>';
+
+  svg += '</svg>';
+  return svg;
+}
+
+
+// ============================================================
+// ASSET LOADERS
+// ============================================================
+function _htmlLoadBackgroundB64(lang) {
+  try {
+    var folderId = (lang === 'EN') ? HTML_PRES.staticEnFolderId : HTML_PRES.staticFrFolderId;
+    var folder   = DriveApp.getFolderById(folderId);
+    var names    = ['Background.PNG', 'Background.png', 'background.PNG', 'background.png'];
+    for (var i = 0; i < names.length; i++) {
+      var iter = folder.getFilesByName(names[i]);
+      if (iter.hasNext()) return Utilities.base64Encode(iter.next().getBlob().getBytes());
+    }
+    Logger.log('Background.PNG not found for lang: ' + lang);
+    return null;
+  } catch(e) {
+    Logger.log('_htmlLoadBackgroundB64 error: ' + e.message);
+    return null;
+  }
+}
+
+function _htmlLoadAssetB64(filename) {
+  try {
+    const folder = DriveApp.getFolderById(HTML_PRES.assetsFolderId);
+    const iter   = folder.getFilesByName(filename);
+    if (iter.hasNext()) return Utilities.base64Encode(iter.next().getBlob().getBytes());
+    // Case-insensitive fallback
+    const all = folder.getFiles();
+    while (all.hasNext()) {
+      const f = all.next();
+      if (f.getName().toLowerCase() === filename.toLowerCase())
+        return Utilities.base64Encode(f.getBlob().getBytes());
+    }
+  } catch(e) { Logger.log('_htmlLoadAssetB64 error: ' + e.message); }
+  return null;
+}
+
+  // ── STANDARD LOOKUP for all other dealers ────────────────────────────────
+  // Tries: normalized_name.png, normalized_name.jpg, normalized_name.jpeg
+  // Falls back to partial name match across all files in the assets folder
+  function _htmlLoadDealerLogoB64(dealerName) {
+  // Loads dealer logo from Assets folder by matching normalized dealer name
+  // Tries exact filename match first, then partial name match as fallback
+  if (!dealerName) return null;
+  try {
+    const folder = DriveApp.getFolderById(HTML_PRES.assetsFolderId);
+    const norm   = dealerName.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'');
+    const exts1  = ['png','jpg','jpeg'];
+    for (var ei = 0; ei < exts1.length; ei++) {
+      const iter = folder.getFilesByName(norm + '.' + exts1[ei]);
+      if (iter.hasNext()) return Utilities.base64Encode(iter.next().getBlob().getBytes());
+    }
+    // Partial match fallback — exclude reserved asset filenames
+    const reserved = ['battsmallcoverlogo'];
+    const all = folder.getFiles();
+    while (all.hasNext()) {
+      const f    = all.next();
+      const name = f.getName().toLowerCase().replace(/[^a-z0-9]/g,'');
+      const key  = norm.replace(/[^a-z0-9]/g,'');
+      if (reserved.some(function(r) { return name.includes(r); })) continue;
+      if (name.includes(key)) return Utilities.base64Encode(f.getBlob().getBytes());
+    }
+  } catch(e) { Logger.log('Dealer logo error: ' + e.message); }
+  return null;
+}
+
+function _htmlLoadForkliftB64(model, brand) {
+  try {
+    const folder = DriveApp.getFolderById(HTML_PRES.forkliftFolderId);
+    const norm   = ((brand||'') + '_' + (model||'')).toLowerCase()
+                   .replace(/[\s\/]+/g,'_').replace(/[^a-z0-9_]/g,'');
+    for (const ext of ['png','jpg','jpeg']) {
+      const iter = folder.getFilesByName(norm + '.' + ext);
+      if (iter.hasNext()) return Utilities.base64Encode(iter.next().getBlob().getBytes());
+    }
+    const modelKey = (model||'').toLowerCase().replace(/[^a-z0-9]/g,'').substring(0,6);
+    if (modelKey.length >= 3) {
+      const all = folder.getFiles();
+      while (all.hasNext()) {
+        const f = all.next();
+        if (f.getName().toLowerCase().replace(/[^a-z0-9]/g,'').includes(modelKey))
+          return Utilities.base64Encode(f.getBlob().getBytes());
+      }
+    }
+  } catch(e) { Logger.log('Forklift image error: ' + e.message); }
+  return null;
+}
+
+function _htmlLoadStaticSlides(lang) {
+  const results = [];
+  try {
+    const folderId = lang === 'EN' ? HTML_PRES.staticEnFolderId : HTML_PRES.staticFrFolderId;
+    const folder   = DriveApp.getFolderById(folderId);
+    const files    = [];
+    const iter     = folder.getFiles();
+    while (iter.hasNext()) {
+      const f    = iter.next();
+      const name = f.getName().toLowerCase();
+      if (name === 'background.png' || name === 'background.PNG') continue;
+      if (name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg')) files.push(f);
+    }
+    files.sort(function(a,b) { return a.getName().localeCompare(b.getName()); });
+    files.forEach(function(f) {
+      results.push(Utilities.base64Encode(f.getBlob().getBytes()));
+    });
+  } catch(e) { Logger.log('Static slides error: ' + e.message); }
+  return results;
+}
+
+
+// ============================================================
+// SIM ENTRIES BUILDER (mirrors _buildSimEntriesFromPipeline)
+// ============================================================
+function _htmlBuildSimEntries(allSimResults, allSimScreenshots, params) {
+  const passing = allSimResults.filter(function(s) { return s.passed; });
+  const hasConstrainedPass = passing.some(function(s) {
+    return (s.scenario || '').includes('CONTRAINTE');
+  });
+  let toShow;
+  if (hasConstrainedPass) {
+    const scenarios = [];
+    passing.forEach(function(s) {
+      var sc = s.scenario || 'STANDARD';
+      if (scenarios.indexOf(sc) < 0) scenarios.push(sc);
+    });
+    const selected = [];
+    scenarios.forEach(function(scenario) {
+      const scenarioSims = passing.filter(function(s) { return (s.scenario || 'STANDARD') === scenario; });
+      const flexSims = scenarioSims.filter(function(s) {
+        return !String(s.battery_type || '').toUpperCase().includes('PLUS') &&
+               !String(s.battery_type || '').toUpperCase().includes('MAX');
+      });
+      const plusSims = scenarioSims.filter(function(s) {
+        return String(s.battery_type || '').toUpperCase().includes('PLUS') ||
+               String(s.battery_type || '').toUpperCase().includes('MAX');
+      });
+      if (flexSims.length > 0) {
+        const bestFlex = flexSims.reduce(function(best, s) {
+          return (s.max_efficiency > best.max_efficiency) ? s : best;
+        }, flexSims[0]);
+        selected.push(bestFlex);
+      }
+      plusSims.forEach(function(s) { selected.push(s); });
+    });
+    toShow = selected.sort(function(a, b) { return (a.simNumber || 0) - (b.simNumber || 0); });
+  } else {
+    toShow = (passing.length > 0 ? passing : allSimResults.slice(0, 1))
+      .slice()
+      .sort(function(a, b) { return (a.simNumber || 0) - (b.simNumber || 0); });
+  }
+  const schedule    = readChargingSchedule();
+  const shiftTimes  = readShiftTimes();
+
+  return toShow.map(function(sim) {
+    const scenarioKey = sim.scenario || 'STANDARD';
+    const idx         = sim.screenshotIndex !== undefined
+      ? sim.screenshotIndex
+      : allSimResults.indexOf(sim);
+    const minMatch    = scenarioKey.match(/(\d+)min/i);
+    const chargeMin   = minMatch ? parseInt(minMatch[1]) : 60;
+    let batteryModel  = 'Flex';
+    const bt = (sim.battery_type || '').toUpperCase();
+    if (bt.includes('MAX'))       batteryModel = 'Max';
+    else if (bt.includes('PLUS')) batteryModel = 'Plus';
+
+    // Derive shift start from Pre-Shift Charge end time — most reliable source
+    // Falls back to params.shift_start_hour, then 7 as last resort
+let shiftStart = 7;
+    const is24hEntry = (params.shifts === 3 && (params.shift_duration || 8) === 8) ||
+                       (params.shifts === 2 && (params.shift_duration || 8) === 12);
+    if (is24hEntry) {
+      shiftStart = 0;
+    } else if (params.shift_start_hour !== undefined && params.shift_start_hour !== null) {
+      shiftStart = params.shift_start_hour;
+    }
+    const chargingEventsForEntry = sim.chargingEvents || [];
+    const preShiftEvent = chargingEventsForEntry.find(function(e) {
+      return (e.label || '').toLowerCase() === 'pre-shift charge';
+    });
+    if (!is24hEntry && preShiftEvent && preShiftEvent.end_time) {
+      const derivedStart = _htmlTimeToFloat(preShiftEvent.end_time);
+      if (derivedStart > 0 && derivedStart < 24) shiftStart = derivedStart;
+    }
+
+    return {
+      scenario:           scenarioKey,
+      chargeMinPerShift:  chargeMin,
+      batteryAh:          sim.battery_ah,
+      chargerAmps:        sim.charger_amps,
+      batteryModel:       batteryModel,
+      batteryType:        sim.battery_type || '',
+      ebox:               sim.ebox || '',
+      shifts:             params.shifts || 2,
+      motorHoursPerShift: _htmlParseWorkHours(sim.work_hours || '') / (params.shifts || 1),
+      workHours:          sim.work_hours || '',
+      truckLoad:          sim.truck_load || params.truck_load || '',
+      efficiency:         sim.max_efficiency || sim.max_eff || 0,
+      minSoc:             (sim.results && sim.results.min_soc)  || 0,
+      totalAh:            Math.round((sim.results && sim.results.total_ah)  || 0),
+      ahAllowed:          Math.round((sim.results && sim.results.allowed_ah)|| 0),
+      voltage:            params.voltage || '',
+      voltage_num:        parseFloat(params.voltage) || 0,
+      compartment:        sim.compartment_w || params.compartment_w || '',
+      passed:             sim.passed || false,
+      schedule:           schedule,
+      shiftTimes:         shiftTimes,
+      screenshot:         (allSimScreenshots && allSimScreenshots[idx]) || null,
+      chargingEvents:     sim.chargingEvents || [],
+      shift_start_hour:   shiftStart,
+      shift_duration:     params.shift_duration || 8,
+      total_ah_raw:       Math.round((sim.results && sim.results.total_ah) || 0)
+    };
+  });
+}
+
+
+// ============================================================
+// DRIVE FOLDER HELPER
+// ============================================================
+function _htmlGetDealerFolder(dealer) {
+  const root = DriveApp.getFolderById(HTML_PRES.porteesFolderId);
+  if (!dealer) return root;
+  const norm = dealer.replace(/[\/\\?%*:|"<>]/g, '_');
+  const iter = root.getFoldersByName(norm);
+  return iter.hasNext() ? iter.next() : root.createFolder(norm);
+}
+
+
+// ============================================================
+// UTILITIES
+// ============================================================
+function _htmlTimeToFloat(timeStr) {
+  const str = String(timeStr || '').trim().toUpperCase();
+  if (str.includes('11:59')) return 24;
+  const match = str.match(/^(\d+):(\d+)\s*(AM|PM)$/);
+  if (!match) return 0;
+  let h = parseInt(match[1]), m = parseInt(match[2]);
+  const p = match[3];
+  if (p === 'PM' && h !== 12) h += 12;
+  if (p === 'AM' && h === 12) h = 0;
+  return h + m / 60;
+}
+
+function _htmlParseWorkHours(workStr) {
+  if (!workStr) return 0;
+  const s = String(workStr).trim();
+  const hMatch = s.match(/^(\d+)h(\d+)?/i);
+  if (hMatch) return parseInt(hMatch[1]) + (parseInt(hMatch[2] || 0) / 60);
+  const cMatch = s.match(/^(\d+):(\d+)/);
+  if (cMatch) return parseInt(cMatch[1]) + parseInt(cMatch[2]) / 60;
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+function _esc(str) {
+  return String(str || '')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+function checkImageDimensions() {
+  const assetFolder = DriveApp.getFolderById('15Ab4OksbNC-SQVnsN9kBtRs38ipF__Or');
+  const forkliftFolder = DriveApp.getFolderById('19GHEXKlYx_Ste7N7IFyx7hpY2BM9kqol');
+  
+  // Check Velox logo and Elevex logo
+  const assetIter = assetFolder.getFiles();
+  while (assetIter.hasNext()) {
+    const f = assetIter.next();
+    const bytes = f.getBlob().getBytes();
+    const isPNG = bytes[1]==80 && bytes[2]==78 && bytes[3]==71;
+    if (isPNG) {
+      const w = ((bytes[16]&0xFF)<<24)|((bytes[17]&0xFF)<<16)|((bytes[18]&0xFF)<<8)|(bytes[19]&0xFF);
+      const h = ((bytes[20]&0xFF)<<24)|((bytes[21]&0xFF)<<16)|((bytes[22]&0xFF)<<8)|(bytes[23]&0xFF);
+      Logger.log(f.getName() + ': ' + w + 'x' + h + 'px');
+    }
+  }
+  
+  // Check forklift images
+  const fkIter = forkliftFolder.getFiles();
+  while (fkIter.hasNext()) {
+    const f = fkIter.next();
+    const bytes = f.getBlob().getBytes();
+    const isPNG = bytes[1]==80 && bytes[2]==78 && bytes[3]==71;
+    if (isPNG) {
+      const w = ((bytes[16]&0xFF)<<24)|((bytes[17]&0xFF)<<16)|((bytes[18]&0xFF)<<8)|(bytes[19]&0xFF);
+      const h = ((bytes[20]&0xFF)<<24)|((bytes[21]&0xFF)<<16)|((bytes[22]&0xFF)<<8)|(bytes[23]&0xFF);
+      Logger.log(f.getName() + ': ' + w + 'x' + h + 'px');
+    }
+  }
+}
+
+function _htmlSOCChart(socArray, chargingEvents) {
+  // ── DIMENSIONS ────────────────────────────────────────────────────────────
+  // SVG is 526x313px — matches the chart card exactly (no scaling needed)
+  // padL=38 padR=10 padT=46 padB=32 => plot area cW=478 cH=235
+  const W = 526, H = 313;
+  const padL = 38, padR = 10, padT = 46, padB = 32;
+  const cW = W - padL - padR;  // 478
+  const cH = H - padT - padB;  // 235
+
+  // ── HELPERS ───────────────────────────────────────────────────────────────
+  // Convert minute index (0-1439) to SVG x coordinate
+  function px(min) { return padL + (min / 1439) * cW; }
+  // Convert SOC value (0-100) to SVG y coordinate
+  function py(val) { return padT + cH - (val / 100) * cH; }
+
+  // ── BUILD SMOOTH PATH FROM REAL SOC ARRAY ────────────────────────────────
+  // Sample every 5 minutes (288 points) for performance
+  // Uses cubic bezier smoothing to avoid staircase appearance
+  var sampled = [];
+  for (var i = 0; i < 1440; i += 5) {
+    sampled.push({ min: i, v: socArray[i] || 0 });
+  }
+  sampled.push({ min: 1439, v: socArray[1439] || 0 });
+
+  var pathD = 'M' + px(sampled[0].min).toFixed(1) + ',' + py(sampled[0].v).toFixed(1);
+  for (var k = 1; k < sampled.length - 1; k++) {
+    var prev = sampled[k-1], cur = sampled[k], next = sampled[k+1];
+    var cp1x = (px(prev.min) + px(cur.min)) / 2;
+    var cp1y = (py(prev.v)   + py(cur.v))   / 2;
+    var cp2x = px(cur.min) - (px(next.min) - px(prev.min)) * 0.12;
+    var cp2y = py(cur.v)   - (py(next.v)   - py(prev.v))   * 0.12;
+    pathD += ' C' + cp1x.toFixed(1) + ',' + cp1y.toFixed(1) +
+             ' '  + cp2x.toFixed(1) + ',' + cp2y.toFixed(1) +
+             ' '  + px(cur.min).toFixed(1) + ',' + py(cur.v).toFixed(1);
+  }
+  var areaD = pathD +
+    ' L' + (padL + cW).toFixed(1) + ',' + (padT + cH) +
+    ' L' + padL + ',' + (padT + cH) + ' Z';
+
+  // ── BUILD SVG STRING ──────────────────────────────────────────────────────
+  var s = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">';
+
+  // Defs: gradient fill + clip path
+  s += '<defs>';
+  s += '<linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">';
+  s += '<stop offset="0%" stop-color="#4a7ab5" stop-opacity="0.4"/>';
+  s += '<stop offset="100%" stop-color="#4a7ab5" stop-opacity="0.05"/>';
+  s += '</linearGradient>';
+  s += '<clipPath id="cp"><rect x="' + padL + '" y="' + padT + '" width="' + cW + '" height="' + cH + '"/></clipPath>';
+  s += '</defs>';
+
+  // White background
+  s += '<rect width="' + W + '" height="' + H + '" fill="#fff"/>';
+
+  // Title
+  s += '<text x="' + (W/2) + '" y="14" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#111" font-family="Arial">State of Charge vs. Time of Day</text>';
+
+  // Legend centered below title
+  s += '<rect x="170" y="22" width="9" height="7" fill="#4a7ab5" opacity="0.5" rx="1"/>';
+  s += '<text x="182" y="29" font-size="7.5" fill="#111" font-family="Arial">State of Charge</text>';
+  s += '<line x1="266" y1="26" x2="279" y2="26" stroke="#e05555" stroke-width="1.5" stroke-dasharray="4,2"/>';
+  s += '<text x="282" y="29" font-size="7.5" fill="#111" font-family="Arial">20% SOC</text>';
+
+  // ── Y-AXIS: major every 20%, mid every 10%, minor every 5% ────────────────
+  // y positions: 100%→46  80%→93  60%→141  40%→188  20%→235  0%→281
+  var yMajors = [
+    { v: 100, y: padT },
+    { v: 80,  y: padT + cH*0.2 },
+    { v: 60,  y: padT + cH*0.4 },
+    { v: 40,  y: padT + cH*0.6 },
+    { v: 20,  y: padT + cH*0.8 },
+    { v: 0,   y: padT + cH }
+  ];
+  yMajors.forEach(function(m) {
+    var y = m.y.toFixed(1);
+    // Gridline
+    s += '<line x1="' + padL + '" y1="' + y + '" x2="' + (padL+cW) + '" y2="' + y + '" stroke="rgba(0,0,0,0.07)" stroke-width="0.7"/>';
+    // Major tick
+    s += '<line x1="' + (padL-6) + '" y1="' + y + '" x2="' + padL + '" y2="' + y + '" stroke="#111" stroke-width="1.1"/>';
+    // Label
+    s += '<text x="' + (padL-8) + '" y="' + (m.y+3).toFixed(1) + '" text-anchor="end" font-size="7.5" fill="#111" font-family="Arial">' + m.v + '%</text>';
+  });
+
+  // Minor/mid ticks every 5%
+  for (var v = 5; v < 100; v += 5) {
+    if (v % 20 === 0) continue; // already drawn as major
+    var yt = (padT + cH - (v/100)*cH).toFixed(1);
+    var isMid = v % 10 === 0;
+    s += '<line x1="' + (isMid ? padL-4 : padL-2) + '" y1="' + yt + '" x2="' + padL + '" y2="' + yt + '" stroke="' + (isMid ? '#444' : '#777') + '" stroke-width="' + (isMid ? '0.7' : '0.5') + '"/>';
+  }
+
+  // ── X-AXIS: major every 3h, minor every 1h ────────────────────────────────
+  var xMajorLabels = ['12AM','3AM','6AM','9AM','12PM','3PM','6PM','9PM'];
+  for (var h = 0; h <= 24; h++) {
+    var xh = (padL + (h/24)*cW).toFixed(1);
+    if (h % 3 === 0) {
+      // Vertical gridline
+      s += '<line x1="' + xh + '" y1="' + padT + '" x2="' + xh + '" y2="' + (padT+cH) + '" stroke="rgba(0,0,0,0.05)" stroke-width="0.7"/>';
+      // Major tick
+      s += '<line x1="' + xh + '" y1="' + (padT+cH) + '" x2="' + xh + '" y2="' + (padT+cH+6) + '" stroke="#111" stroke-width="1.1"/>';
+      // Label
+      if (h < 24) s += '<text x="' + xh + '" y="' + (padT+cH+16) + '" text-anchor="middle" font-size="7.5" fill="#111" font-family="Arial">' + xMajorLabels[h/3] + '</text>';
+    } else {
+      // Minor tick
+      s += '<line x1="' + xh + '" y1="' + (padT+cH) + '" x2="' + xh + '" y2="' + (padT+cH+3) + '" stroke="#777" stroke-width="0.5"/>';
+    }
+  }
+
+  // ── AXIS BORDERS ──────────────────────────────────────────────────────────
+  s += '<line x1="' + padL + '" y1="' + padT + '" x2="' + padL + '" y2="' + (padT+cH) + '" stroke="#333" stroke-width="1"/>';
+  s += '<line x1="' + padL + '" y1="' + (padT+cH) + '" x2="' + (padL+cW) + '" y2="' + (padT+cH) + '" stroke="#333" stroke-width="1"/>';
+
+  // ── 20% THRESHOLD LINE ────────────────────────────────────────────────────
+  var thresh = py(20).toFixed(1);
+  s += '<line x1="' + padL + '" y1="' + thresh + '" x2="' + (padL+cW) + '" y2="' + thresh + '" stroke="#e05555" stroke-width="1.2" stroke-dasharray="5,3"/>';
+
+  // ── AREA FILL + SOC LINE ──────────────────────────────────────────────────
+  s += '<path clip-path="url(#cp)" fill="url(#sg)" d="' + areaD + '"/>';
+  s += '<path clip-path="url(#cp)" fill="none" stroke="#4a7ab5" stroke-width="1.5" d="' + pathD + '"/>';
+
+  s += '</svg>';
+  return s;
+}
+
+function testSOCChartHTML() {
+  // Generate a fake SOC array simulating 3-shift 8h pattern
+  const socArray = [];
+  for (let i = 0; i < 1440; i++) {
+    const cycle = i % 480;
+    const soc = 100 - (cycle / 480) * 35 + Math.sin(i / 30) * 5;
+    socArray.push(Math.max(20, Math.min(100, soc)));
+  }
+  
+  const html = _htmlSOCChart(socArray, []);
+  Logger.log('SVG length: ' + html.length + ' chars');
+  Logger.log('Contains path: ' + html.includes('<path'));
+  Logger.log('Contains Y labels: ' + html.includes('100%'));
+  Logger.log('Contains X labels: ' + html.includes('12AM'));
+  Logger.log('SUCCESS — chart HTML generated');
+}
+
+function debugHTMLPreview() {
+  // Minimal test params matching testLindeE50_3shifts
+  const params = {
+    dealer: 'Wajax',
+    customer: 'Metaltech Omega',
+    customer_domain: '',
+    forklift_manufacturer: 'HYSTER',
+    forklift_model: 'J50XN',
+    voltage: 80,
+    shifts: 3,
+    shift_duration: 8,
+    use_type: 'average',
+    shift_start_hour: 0,
+    language: 'fr'
+  };
+
+  // Fake a minimal sim entry so the sim + conclusion slides render
+  const fakeSOC = [];
+  for (let i = 0; i < 1440; i++) {
+    const cycle = i % 480;
+    fakeSOC.push(Math.max(65, Math.min(100, 100 - (cycle / 480) * 35)));
+  }
+
+  const fakeSimResults = [{
+    battery_ah: 450, charger_amps: 270, battery_type: 'VeloxFlex',
+    charger_model: 'IHF-GE0-64803-80/400E', max_efficiency: 61,
+    work_hours: '12h48', truck_load: 60, compartment_w: 39.5,
+    ebox: 'EBOX02', passed: true, scenario: 'STANDARD',
+    shift_duration: 8, shift_start_hour: 0, voltage: 80,
+    chargingEvents: [
+      { start_time: '2:00 AM',  end_time: '2:15 AM',  label: 'S1 Break' },
+      { start_time: '4:30 AM',  end_time: '5:00 AM',  label: 'S1 Lunch' },
+      { start_time: '7:30 AM',  end_time: '7:45 AM',  label: 'S1 Break' },
+      { start_time: '10:00 AM', end_time: '10:15 AM', label: 'S2 Break' },
+      { start_time: '12:30 PM', end_time: '1:00 PM',  label: 'S2 Lunch' },
+      { start_time: '3:30 PM',  end_time: '3:45 PM',  label: 'S2 Break' },
+      { start_time: '6:15 PM',  end_time: '6:30 PM',  label: 'S3 Break' },
+      { start_time: '8:30 PM',  end_time: '9:00 PM',  label: 'S3 Dinner' },
+      { start_time: '11:30 PM', end_time: '11:45 PM', label: 'S3 Break' }
+    ],
+    results: { total_ah: 769, allowed_ah: 900, remaining_ah: 131,
+               min_soc: 73, battery_used_pct: 171 }
+  }];
+
+  const fakeScreenshots = [fakeSOC];
+
+  // Build the sim entries the same way the pipeline does
+  const simEntries = _htmlBuildSimEntries(fakeSimResults, fakeScreenshots, params);
+
+  // Load assets
+  const veloxLogoB64  = _htmlLoadAssetB64('VELOX_LOGO.png');
+  const dealerLogoB64 = _htmlLoadDealerLogoB64(params.dealer);
+  const forkliftB64   = _htmlLoadForkliftB64(params.forklift_model, params.forklift_manufacturer);
+  const staticSlides  = _htmlLoadStaticSlides('FR');
+
+  // Build the full HTML
+  const html = _htmlBuildDocument({
+    params, simEntries, isEN: false,
+    title: 'DEBUG_PREVIEW',
+    veloxLogoB64, dealerLogoB64, forkliftB64, staticSlides
+  });
+
+  // Save to Drive
+  const folder = DriveApp.getFolderById(HTML_PRES.porteesFolderId);
+  const existing = folder.getFilesByName('DEBUG_PREVIEW.html');
+  while (existing.hasNext()) existing.next().setTrashed(true);
+  const file = folder.createFile('DEBUG_PREVIEW.html', html, MimeType.PLAIN_TEXT);
+
+  Logger.log('Preview saved: ' + file.getUrl());
+  Logger.log('File ID: ' + file.getId());
+}

@@ -1,0 +1,470 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOM BATTERY CALCULATOR
+// Velox Power Systems — SimulationAutomation
+//
+// Calculates feasible custom weightbox battery layouts for forklifts
+// where no standard Ebox fits the compartment.
+//
+// Called from SimulationAutomation.gs when CUSTOM_WEIGHTBOX_A_EVALUER fires.
+// Output fed to CustomBatteryHTML.gs for PDF generation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CELL CATALOG
+// All dimensions in inches (converted from mm via ×0.0393701)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CUSTOM_CELLS = [
+  {
+    key:       'EVE_230',
+    name:      'EVE 230Ah (E2)',
+    type:      'EVE',
+    preferred: true,
+    depth:     6.85,   // profondeur (goes into forklift)
+    width:     2.12,   // largeur (left-right)
+    height:    8.56,   // hauteur (standing upright)
+    ah:        230,
+    voltage:   3.2,
+    validAh:   [450, 700, 900]
+  },
+  {
+    key:       'EVE_280',
+    name:      'EVE 280Ah (E3)',
+    type:      'EVE',
+    preferred: true,
+    depth:     6.83,
+    width:     2.83,
+    height:    8.06,
+    ah:        280,
+    voltage:   3.2,
+    validAh:   [280, 550]
+  },
+  {
+    key:       'CALB_163',
+    name:      'CALB 163Ah (C1)',
+    type:      'CALB',
+    preferred: false,
+    depth:     6.87,
+    width:     1.43,
+    height:    9.07,
+    ah:        163,
+    voltage:   3.2,
+    validAh:   [320, 500, 650, 800, 1000]
+  },
+  {
+    key:       'CALB_230',
+    name:      'CALB 230Ah (C3)',
+    type:      'CALB',
+    preferred: false,
+    depth:     6.85,
+    width:     2.11,
+    height:    8.58,
+    ah:        230,
+    voltage:   3.2,
+    validAh:   [200, 450, 700, 900]
+  }
+];
+
+// Clearance margins — derived from Quote's layout sheet
+// Caisson must be slightly smaller than compartment to slide in
+const CAISSON_CLEARANCE_DEPTH = 0.39;  // inches removed from depth
+const CAISSON_CLEARANCE_WIDTH = 2.65;  // inches removed from width (total both sides)
+// Height: no clearance — cells never reach the top of the compartment
+const PACK_DIVIDER_THICKNESS  = 0.0625; // 1/16" plastic isolation sheet around each pack (360°)
+
+// ── Custom Ah tiers per voltage ───────────────────────────────────────────
+// Each tier maps to a specific cell type via CUSTOM_CELLS validAh lists.
+// Ghost sims try these in order and stop at first pass.
+// standardAh = the tier used (what we quote). achievedAh = physical cell reality.
+const CUSTOM_AH_TIERS_BY_VOLTAGE = {
+  24:  [280, 450],
+  36:  [400, 450, 550, 650],
+  48:  [280, 450, 500, 550, 650, 700, 900],
+  80:  [280, 450, 500, 550, 650, 700, 900, 1000],
+  96:  [550, 700]
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CELLS PER PACK LOOKUP
+// Fixed table derived from Quote's layout sheet formulas.
+// Math.ceil(targetAh / cellAh) is wrong for some combinations
+// (e.g. CALB 163Ah @ 500Ah: ceil(500/163)=4 but correct is 3 parallel strings)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CELLS_PER_PACK = {
+  'EVE_230':  { 450: 2, 700: 4, 900: 4 },
+  'EVE_280':  { 280: 1, 550: 2 },
+  'CALB_163': { 320: 2, 500: 3, 650: 4, 800: 5, 1000: 7 },
+  'CALB_230': { 200: 1, 450: 2, 700: 4, 900: 4 }
+};
+
+function getCellsPerPack(cellKey, targetAh) {
+  const table = CELLS_PER_PACK[cellKey];
+  if (!table) return null;
+  const count = table[targetAh];
+  if (count === undefined) return null;
+  return count;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN ENTRY POINT
+// Given compartment dimensions, voltage, and target Ah:
+// → tries EVE cells first, then CALB
+// → finds best serpentine layout that fits
+// → returns layout object or null if nothing fits
+// ─────────────────────────────────────────────────────────────────────────────
+
+function calculateCustomBattery(compartment, voltage, targetAh) {
+  const dims = parseCompartmentInput(compartment);
+
+  if (!dims.length || !dims.width || !dims.height) {
+    Logger.log('calculateCustomBattery: invalid compartment — ' + compartment);
+    return null;
+  }
+
+  const compDepth  = dims.length;
+  const compWidth  = dims.width;
+  const compHeight = dims.height;
+
+  const caissonDepth = compDepth - CAISSON_CLEARANCE_DEPTH;
+  const caissonWidth = compWidth - CAISSON_CLEARANCE_WIDTH;
+
+  Logger.log('calculateCustomBattery: compartment=' + compartment +
+             ' | caisson=' + caissonDepth.toFixed(2) + '" deep × ' +
+             caissonWidth.toFixed(2) + '" wide × ' +
+             compHeight.toFixed(2) + '" tall' +
+             ' | voltage=' + voltage + 'V | targetAh=' + targetAh);
+
+  // Number of cell-packs in series for this voltage
+  const seriesPacks = Math.round(voltage / 3.2);
+
+  // Try EVE first (preferred:true), then CALB
+  const orderedCells = CUSTOM_CELLS.slice().sort(function(a, b) {
+    if (a.preferred && !b.preferred) return -1;
+    if (!a.preferred && b.preferred) return 1;
+    return 0;
+  });
+
+  for (var i = 0; i < orderedCells.length; i++) {
+    const cell = orderedCells[i];
+
+    // Skip if this cell type is not valid for targetAh
+    if (cell.validAh.indexOf(targetAh) === -1) {
+      Logger.log('  ' + cell.name + ': not valid for ' + targetAh + 'Ah — skipping');
+      continue;
+    }
+
+   // Cells per pack — looked up from fixed table, not calculated
+    // Math.ceil is wrong for CALB 163Ah: ceil(500/163)=4 but correct answer is 3
+    const cellsPerPack = getCellsPerPack(cell.key, targetAh);
+    if (cellsPerPack === null) {
+      Logger.log('  ' + cell.name + ': no cellsPerPack defined for ' + targetAh + 'Ah — skipping');
+      continue;
+    }
+    const packAh = cellsPerPack * cell.ah;
+
+    // Pack physical dimensions
+    const packWidth  = cellsPerPack * cell.width;
+    const packDepth  = cell.depth;
+    const packHeight = cell.height;
+
+    Logger.log('  ' + cell.name + ': cellsPerPack=' + cellsPerPack +
+               ' packWidth=' + packWidth.toFixed(2) + '"' +
+               ' packDepth=' + packDepth.toFixed(2) + '"' +
+               ' packHeight=' + packHeight.toFixed(2) + '"');
+
+    // Height check — cells must stand upright within compartment height
+    if (packHeight > compHeight) {
+      Logger.log('  ' + cell.name + ': height ' + packHeight.toFixed(2) +
+                 '" exceeds compartment ' + compHeight.toFixed(2) + '" — skipping');
+      continue;
+    }
+
+    // Each pack needs 1/16" isolation on all sides (dividers shared between adjacent packs)
+    // Total width for n cols = n × packWidth + (n+1) × divider
+    // Solve for max cols: n × (packWidth + divider) + divider ≤ available
+    // → n ≤ (available - divider) / (packWidth + divider)
+    const maxPacksDeep = Math.floor((caissonDepth - PACK_DIVIDER_THICKNESS) / (packDepth + PACK_DIVIDER_THICKNESS));
+    const maxPacksWide = Math.floor((caissonWidth - PACK_DIVIDER_THICKNESS) / (packWidth + PACK_DIVIDER_THICKNESS));
+
+    Logger.log('  ' + cell.name + ': maxDeep=' + maxPacksDeep +
+               ' maxWide=' + maxPacksWide +
+               ' seriesNeeded=' + seriesPacks);
+
+    if (maxPacksDeep === 0 || maxPacksWide === 0) {
+      Logger.log('  ' + cell.name + ': pack does not fit in caisson — skipping');
+      continue;
+    }
+
+    // Find best column count
+    // Try from max cols down to 1 — prefer more columns (cleaner serpentine)
+    var bestLayout = null;
+
+    for (var cols = maxPacksWide; cols >= 1; cols--) {
+      const rowsNeeded = Math.ceil(seriesPacks / cols);
+
+      if (rowsNeeded > maxPacksDeep) continue;
+
+      // Total space including dividers around all packs
+      const depthUsed  = rowsNeeded * packDepth + (rowsNeeded + 1) * PACK_DIVIDER_THICKNESS;
+      const widthUsed  = cols * packWidth       + (cols + 1)       * PACK_DIVIDER_THICKNESS;
+      const depthSpare = caissonDepth - depthUsed;
+      const widthSpare = caissonWidth - widthUsed;
+
+      bestLayout = {
+        // Cell info
+        cell:         cell,
+        cellKey:      cell.key,
+        cellName:     cell.name,
+        cellType:     cell.type,
+
+        // Pack info
+        cellsPerPack: cellsPerPack,
+        packAh:       packAh,
+        packWidth:    packWidth,
+        packDepth:    packDepth,
+        packHeight:   packHeight,
+
+        // Layout
+        cols:         cols,
+        rows:         rowsNeeded,
+        totalPacks:   seriesPacks,
+        totalCells:   seriesPacks * cellsPerPack,
+
+        // Achieved battery
+        achievedAh:   packAh,
+        voltage:      voltage,
+        targetAh:     targetAh,
+
+        // Dimensions used vs available
+        caissonDepth:  caissonDepth,
+        caissonWidth:  caissonWidth,
+        compDepth:     compDepth,
+        compWidth:     compWidth,
+        compHeight:    compHeight,
+        depthUsed:     depthUsed,
+        widthUsed:     widthUsed,
+        heightUsed:    packHeight,
+        depthSpare:    depthSpare,
+        widthSpare:    widthSpare,
+        heightSpare:   compHeight - packHeight,
+
+        // Wiring path (serpentine pack numbers in series order)
+        serpentinePath: buildSerpentinePath(cols, rowsNeeded, seriesPacks)
+      };
+
+      // Found a valid layout — take the first one (most columns)
+      break;
+    }
+
+    if (bestLayout) {
+      Logger.log('calculateCustomBattery: FOUND — ' + cell.name +
+                 ' | ' + bestLayout.cols + ' cols × ' + bestLayout.rows + ' rows' +
+                 ' | ' + bestLayout.totalCells + ' cells (' +
+                 seriesPacks + ' packs × ' + cellsPerPack + ' cells/pack)' +
+                 ' | ' + bestLayout.achievedAh + 'Ah @ ' + voltage + 'V' +
+                 ' | depth ' + bestLayout.depthUsed.toFixed(2) + '"/' + caissonDepth.toFixed(2) + '"' +
+                 ' | width ' + bestLayout.widthUsed.toFixed(2) + '"/' + caissonWidth.toFixed(2) + '"' +
+                 ' | height ' + bestLayout.heightUsed.toFixed(2) + '"/' + compHeight.toFixed(2) + '"');
+      return bestLayout;
+    }
+
+    Logger.log('  ' + cell.name + ': no valid col/row arrangement found');
+  }
+
+  Logger.log('calculateCustomBattery: no cell fits — compartment too small for ' +
+             targetAh + 'Ah at ' + voltage + 'V');
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SERPENTINE PATH BUILDER
+// Returns array of pack numbers in series wiring order.
+// Even columns (0,2,4) go top→bottom (ascending row index)
+// Odd columns (1,3,5) go bottom→top (descending row index)
+//
+// Example: 3 cols × 5 rows = 15 packs
+// Grid:  col0=[1,2,3,4,5]  col1=[6,7,8,9,10]  col2=[11,12,13,14,15]
+// Path:  1→2→3→4→5 (down col0)
+//        → 10→9→8→7→6 (up col1, so connection 5→6 is at bottom)
+//        → 11→12→13→14→15 (down col2, so connection 10→11 is at top)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildSerpentinePath(cols, rows, totalPacks) {
+  // Build grid — fill column by column, top to bottom
+  var grid = [];
+  var packNum = 1;
+  for (var c = 0; c < cols; c++) {
+    var col = [];
+    for (var r = 0; r < rows; r++) {
+      if (packNum <= totalPacks) {
+        col.push(packNum++);
+      } else {
+        col.push(null); // empty slot in last column if totalPacks not divisible
+      }
+    }
+    grid.push(col);
+  }
+
+  // Build serpentine path
+  var path = [];
+  for (var c = 0; c < grid.length; c++) {
+    var col = grid[c].filter(function(p) { return p !== null; });
+    if (c % 2 === 0) {
+      // Even column: top → bottom (ascending)
+      col.forEach(function(p) { path.push(p); });
+    } else {
+      // Odd column: bottom → top (descending)
+      col.slice().reverse().forEach(function(p) { path.push(p); });
+    }
+  }
+
+  return { path: path, grid: grid };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GHOST SIM RUNNER
+// Runs the full simulation pipeline with a custom Ah value injected
+// instead of going through Ebox lookup.
+// Tries CUSTOM_AH_TIERS in order — stops at first passing tier.
+// Returns { layout, simResult, chargerAmps, chargerModel } or null.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function runGhostSims(params, compartment, bestMatch, eboxResult, chargers) {
+  const ahTiers = CUSTOM_AH_TIERS_BY_VOLTAGE[params.voltage] ||
+                  CUSTOM_AH_TIERS_BY_VOLTAGE[48];
+  Logger.log('Ghost sims: trying Ah tiers for ' + params.voltage + 'V — ' + ahTiers.join(', '));
+
+  for (var t = 0; t < ahTiers.length; t++) {
+    const targetAh = ahTiers[t];
+
+    // Check if any cell type supports this Ah tier
+    const layout = calculateCustomBattery(
+      compartment,
+      params.voltage || bestMatch.voltage,
+      targetAh
+    );
+
+    if (!layout) {
+      Logger.log('Ghost sim ' + targetAh + 'Ah: no cell fits compartment — skipping');
+      continue;
+    }
+
+    Logger.log('Ghost sim ' + targetAh + 'Ah: layout found (' + layout.cellName + ')' +
+               ' — running simulation');
+
+    // Build a ghost plan using the custom Ah
+    // Use the same charger selection logic as the normal pipeline
+    const voltage       = params.voltage || bestMatch.voltage;
+    const useType       = params.use_type || 'average';
+    const leadAcidAh    = bestMatch ? bestMatch.ah : 0;
+    const divisor       = useType === 'heavy' ? 8 : useType === 'moderate' ? 9 : 10;
+    const truckLoad     = leadAcidAh > 0 ? Math.round(leadAcidAh * 0.80 / divisor) : 0;
+    const shiftDur      = params.shift_duration || 8;
+
+    // Pick starting charger — same rules as selectSimulations
+    const flexStartAmps = voltage === 80 ? 215 : 250;
+    const ghostCharger  = chargers.find(function(c) { return c.amps >= flexStartAmps; }) ||
+                          chargers[0];
+
+    if (!ghostCharger) {
+      Logger.log('Ghost sim ' + targetAh + 'Ah: no charger available — skipping');
+      continue;
+    }
+
+    // Determine battery type label
+    const batteryType = targetAh >= 550 ? 'VeloxCustom_Plus' : 'VeloxCustom_Flex';
+
+    const ghostPlan = {
+      battery_ah:       targetAh,
+      charger_amps:     ghostCharger.amps,
+      charger_model:    ghostCharger.model,
+      truck_load:       truckLoad,
+      truck_efficiency: 80,
+      lead_acid_ah:     leadAcidAh,
+      compartment_w:    bestMatch ? bestMatch.compartment_w : 0,
+      shifts:           params.shifts,
+      shift_duration:   shiftDur,
+      battery_type:     'VeloxCustom',
+      ebox:             'CUSTOM',
+      conditional:      false,
+      label:            'Ghost Sim — ' + targetAh + 'Ah + ' + ghostCharger.amps + 'A (VeloxCustom)'
+    };
+
+    // Build charging events
+    const chargingEvents = buildChargingEvents(
+      params.shifts,
+      shiftDur,
+      params.custom_charge_times || [],
+      params.stated_charge_minutes_per_shift || 0,
+      params.shift_start_hour
+    );
+
+    // Run efficiency search — same as normal pipeline
+    const effSearch  = findMaxEfficiency(ghostPlan, chargingEvents, 0,
+                                         params.target_efficiency || 100);
+    const maxEff     = effSearch.maxEfficiency;
+    const results    = effSearch.finalResults;
+    const workHours  = calculateWorkHours(chargingEvents, params.shifts,
+                                           maxEff, shiftDur, params.shift_start_hour);
+    const workPass   = meetsMinWorkThreshold(workHours.totalMinutes, params.shifts,
+                                              ghostPlan.battery_type, shiftDur);
+    const passed     = results.status === 'PASS' && workPass;
+
+    Logger.log('Ghost sim ' + targetAh + 'Ah: eff=' + maxEff + '%' +
+               ' work=' + workHours.formatted +
+               ' pass=' + passed);
+
+    if (passed) {
+      Logger.log('Ghost sim PASS at ' + targetAh + 'Ah — stopping tier search');
+      return {
+        layout:       layout,
+        targetAh:     targetAh,
+        achievedAh:   layout.achievedAh,
+        chargerAmps:  ghostCharger.amps,
+        chargerModel: ghostCharger.model,
+        maxEff:       maxEff,
+        workHours:    workHours.formatted,
+        results:      results,
+        chargingEvents: chargingEvents,
+        ghostPlan:    ghostPlan
+      };
+    }
+  }
+
+  Logger.log('Ghost sims: no Ah tier passed — custom battery not viable for this application');
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEST FUNCTION
+// ─────────────────────────────────────────────────────────────────────────────
+
+function testCustomBattery_AMOD() {
+  Logger.log('=== TEST: A-MOD custom battery calculator ===');
+
+  const tiers48 = CUSTOM_AH_TIERS_BY_VOLTAGE[48];
+  tiers48.forEach(function(tier) {
+    const result = calculateCustomBattery('47.90 x 16.75 x 30.88', 48, tier);
+    if (result) {
+      Logger.log(tier + 'Ah → ' + result.cellName +
+                 ' | achieved=' + result.achievedAh + 'Ah' +
+                 ' | standard=' + tier + 'Ah' +
+                 ' | ' + result.cols + ' cols × ' + result.rows + ' rows' +
+                 ' | ' + result.totalCells + ' cells' +
+                 ' | depth ' + result.depthUsed.toFixed(2) + '"/' +
+                 result.caissonDepth.toFixed(2) + '"' +
+                 ' | width ' + result.widthUsed.toFixed(2) + '"/' +
+                 result.caissonWidth.toFixed(2) + '"' +
+                 ' | fits=' + (result.depthUsed <= result.caissonDepth &&
+                                result.widthUsed <= result.caissonWidth ? 'YES' : 'NO'));
+      if (tier === 450) {
+        Logger.log('  Serpentine path: ' + result.serpentinePath.path.join(' → '));
+      }
+    } else {
+      Logger.log(tier + 'Ah → NO FIT for A-MOD compartment');
+    }
+  });
+
+  Logger.log('=== TEST COMPLETE ===');
+}
