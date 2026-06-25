@@ -1621,11 +1621,149 @@ if (!params.voltage || params.voltage === 0) {
   const compartmentL = compartmentDims[0] || 0;
   const compartmentH = compartmentDims[2] || 0;
   const eboxResult = verifyEbox(compartmentW, params.voltage, compartmentL, compartmentH);
-  if (eboxResult.total_compatible === 0) {
+ if (eboxResult.total_compatible === 0) {
     const eboxFailDetails = eboxResult.fitting_eboxes.length > 0
-  ? 'Eboxes physiquement compatibles: ' + eboxResult.fitting_eboxes.join(', ') + ' — mais aucune batterie assignée à ces Eboxes.'
-  : 'Aucun Ebox ne rentre dans ce compartiment (L: ' + compartmentL + '" x W: ' + compartmentW + '" x H: ' + compartmentH + '"). EBOX01 requiert min 38.44" L, EBOX02 requiert min 38.69" L.';
-sendFlagEmail(params, 'AUCUNE_BATTERIE_COMPATIBLE', eboxFailDetails, params.thread);
+      ? 'Eboxes physiquement compatibles: ' + eboxResult.fitting_eboxes.join(', ') + ' — mais aucune batterie assignée à ces Eboxes.'
+      : 'Aucun Ebox ne rentre dans ce compartiment (L: ' + compartmentL + '" x W: ' + compartmentW + '" x H: ' + compartmentH + '"). EBOX01 requiert min 38.44" L, EBOX02 requiert min 38.69" L.';
+
+    // ── Try custom battery path ──────────────────────────────────────────────
+    Logger.log('AUCUNE_BATTERIE_COMPATIBLE — attempting custom battery path');
+    const compartmentStr = bestMatch.compartment_full || (compartmentL + ' x ' + compartmentW + ' x ' + compartmentH);
+    const customChargers = getChargersForVoltage(params.voltage, params.ip54_charger, params.heating_option);
+    const ghostResult    = runGhostSims(params, compartmentStr, bestMatch, eboxResult, customChargers);
+
+    if (ghostResult) {
+      Logger.log('Custom battery ghost sim PASS — running full efficiency search');
+      try {
+        // ── 1. Re-run findMaxEfficiency without 80% cap ──────────────────────
+        const fullPlan = Object.assign({}, ghostResult.ghostPlan, {
+          battery_ah:       ghostResult.achievedAh,
+          truck_efficiency: 100,
+          battery_type:     'VeloxCustom'
+        });
+        const chargingEvents = ghostResult.chargingEvents;
+        const effSearch  = findMaxEfficiency(fullPlan, chargingEvents, 0, params.target_efficiency || 100);
+        const maxEff     = effSearch.maxEfficiency;
+        const simResults = effSearch.finalResults;
+        const workHours  = calculateWorkHours(chargingEvents, params.shifts, maxEff,
+                                              params.shift_duration || 8, params.shift_start_hour);
+
+        Logger.log('Custom battery full sim: eff=' + maxEff + '% work=' + workHours.formatted);
+
+        // ── 2. Build allSimResults entry shaped like normal pipeline ─────────
+        const shiftDesc = params.shifts + 'x' + (params.shift_duration || 8) + 'h';
+      const customSimEntry = {
+          passed:            simResults.status === 'PASS',
+          battery_ah:        ghostResult.achievedAh,
+          charger_amps:      ghostResult.chargerAmps,
+          charger_model:     ghostResult.chargerModel,
+          battery_type:      'VeloxCustom',
+          battery_label:     '[CUSTOM] VeloxCustom ' + params.voltage + 'V ' + ghostResult.achievedAh + 'Ah',
+          ebox:              'CUSTOM',
+          max_efficiency:    maxEff,
+          work_hours:        workHours.formatted,
+          results:           simResults,
+          soc_over_time:     simResults.soc_over_time || [],
+          chargingEvents:    chargingEvents,
+          truck_load:        fullPlan.truck_load,
+          label:             'Sim 1 — ' + ghostResult.achievedAh + 'Ah + ' + ghostResult.chargerAmps + 'A (VeloxCustom)',
+          scenario:          'CUSTOM_BATTERY',
+          flag:              effSearch.flag || null
+        };
+
+        // ── 3. Generate Portée PDF via normal HTML generator ─────────────────
+        const porteeParams = Object.assign({}, params, {
+          battery_ah:    ghostResult.achievedAh,
+          charger_amps:  ghostResult.chargerAmps,
+          charger_model: ghostResult.chargerModel,
+          battery_type:  'VeloxCustom',
+          scenario:      'CUSTOM_BATTERY'
+        });
+        const porteePdfBlob = buildHTMLPortee(
+          porteeParams,
+          [customSimEntry],
+          [simResults.soc_over_time || []]
+        );
+
+        // ── 4. Log to LOGS sheet ─────────────────────────────────────────────
+        logSimulationResult(Object.assign({}, porteeParams, {
+          battery_ah:       ghostResult.achievedAh,
+          charger_amps:     ghostResult.chargerAmps,
+          charger_model:    ghostResult.chargerModel,
+          truck_load:       fullPlan.truck_load,
+          truck_efficiency: maxEff,
+          work_hours:       workHours.formatted,
+          lead_acid_ah:     leadAcidAh,
+          compartment:      compartmentStr,
+          overall_passed:   simResults.status === 'PASS',
+          notes:            '[CUSTOM BATTERY] EVE ' + ghostResult.achievedAh + 'Ah — À valider avant envoi dealer',
+          flags:            ['CUSTOM_BATTERY_AUTO_GENERATED'],
+          scenario:         'CUSTOM_BATTERY'
+        }), simResults, 1);
+
+        // ── 5. Generate custom battery assessment PDF ────────────────────────
+        const customHtml    = generateCustomBatteryHTML(params, ghostResult);
+        const customPdfResp = UrlFetchApp.fetch(
+          'https://velox-pdf-service-414761682351.us-central1.run.app/generate-pdf',
+          {
+            method:      'post',
+            contentType: 'application/json',
+            payload:     JSON.stringify({ html: customHtml, pageFormat: 'Letter' }),
+            muteHttpExceptions: true
+          }
+        );
+        const customPdfName = 'VeloxCustom_' + (params.forklift_manufacturer || '') + '_' +
+                              (params.forklift_model || '') + '_' + params.voltage + 'V_' + shiftDesc + '.pdf';
+
+        // ── 6. Send internal email to quote@ + marc-antoine@ with PDF ────────
+        const emailSubject = '[CUSTOM BATTERY — À VALIDER] ' +
+                             (params.dealer || '') + ' | ' +
+                             (params.forklift_manufacturer || '') + ' ' + (params.forklift_model || '') + ' ' +
+                             params.voltage + 'V ' + shiftDesc;
+
+        const emailBody = '[ CUSTOM BATTERY — VALIDATION REQUISE ]\n\n' +
+                          'Dealer:    ' + (params.dealer || '—') + '\n' +
+                          'Client:    ' + (params.customer || '—') + '\n' +
+                          'Chariot:   ' + (params.forklift_manufacturer || '') + ' ' + (params.forklift_model || '') + '\n' +
+                          'Voltage:   ' + params.voltage + 'V\n' +
+                          'Shifts:    ' + shiftDesc + '\n\n' +
+                          '[ RÉSULTAT SIMULATION ]\n' +
+                          'Batterie:  VeloxCustom ' + params.voltage + 'V ' + ghostResult.achievedAh + 'Ah (EVE 280Ah)\n' +
+                          'Chargeur:  ' + ghostResult.chargerAmps + 'A (' + (ghostResult.chargerModel || '—') + ')\n' +
+                          'Autonomie: ' + workHours.formatted + '\n' +
+                          'Eff. max:  ' + maxEff + '%\n' +
+                          'Statut:    ' + (simResults.status === 'PASS' ? '✓ PASS' : '✗ FAIL') + '\n\n' +
+                          'PDF interne en pièce jointe. Valider le design avant de répondre au dealer.\n' +
+                          'La Portée est disponible dans LOGS pour envoi après validation.\n\n' +
+                          'Marc-Antoine\nVelox Power Systems';
+
+        const emailAttachments = [];
+        if (customPdfResp.getResponseCode() === 200) {
+          const customPdfBlob = customPdfResp.getBlob().setContentType('application/pdf');
+          customPdfBlob.setName(customPdfName);
+          emailAttachments.push(customPdfBlob);
+        } else {
+          Logger.log('Custom battery PDF Cloud Run error: ' + customPdfResp.getResponseCode());
+        }
+
+        GmailApp.sendEmail('quote@veloxpower.com', emailSubject, emailBody, {
+          cc:          'marc-antoine@veloxpower.com',
+          attachments: emailAttachments,
+          name:        'Velox Pipeline'
+        });
+
+        Logger.log('Custom battery: email sent to quote@ + marc-antoine@ | Portée in LOGS');
+
+      } catch (e) {
+        Logger.log('Custom battery path error: ' + e.message + '\n' + e.stack);
+        sendFlagEmail(params, 'AUCUNE_BATTERIE_COMPATIBLE',
+          eboxFailDetails + '\n\n[Custom battery path error: ' + e.message + ']', params.thread);
+      }
+    } else {
+      // Ghost sim also failed — send standard flag email
+      Logger.log('Custom battery ghost sim also failed — sending flag email');
+      sendFlagEmail(params, 'AUCUNE_BATTERIE_COMPATIBLE', eboxFailDetails, params.thread);
+    }
     return;
   }
   if (eboxResult.has_avoid_only) pipelineFlags.push('BATTERIES_A_EVITER_SEULEMENT');
