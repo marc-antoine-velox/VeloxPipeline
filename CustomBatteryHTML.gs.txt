@@ -61,7 +61,7 @@ function generateCustomBatteryHTML(params, ghostResult) {
     const pathLabelY = 30;  // #last→#first label
     const colLabelY  = 48;  // col direction labels
     const arrowCurveY = 56; // top arrow curve
-    const compStartY = 70;  // compartment top edge
+    const compStartY = 110;  // compartment top edge
     const compStartX = 70;  // compartment left edge
     const caissonStartX = compStartX + clearancePxWidth;
     const caissonStartY = compStartY + 4; // 0.39" depth clearance ×10
@@ -133,11 +133,15 @@ function generateCustomBatteryHTML(params, ghostResult) {
                    ' ' + colDirectionLabel(c) + '</text>';
     }
 
+    // Pre-compute BMS dimensions needed by arrows
+    const bmsRectHeight = Math.max(bmsEndY - bmsStartY - 8, 38);
+    const bmsBottom     = bmsStartY + bmsRectHeight + 4;
+
     // Build serpentine arrows
     // Downward cols: arrow on left edge. Upward cols: arrow on right edge of prev col.
     var arrows = '';
     // Col 1 down arrow
-    const col1ArrowX = gridStartX - 12;
+    const col1ArrowX = gridStartX - 24;
     arrows += '<line x1="' + col1ArrowX + '" y1="' + (gridStartY + 20) +
               '" x2="' + col1ArrowX + '" y2="' + (gridStartY + gridPxDepth - 20) +
               '" stroke="#E24B4A" stroke-width="1.5" marker-end="url(#arr)"/>';
@@ -147,16 +151,19 @@ function generateCustomBatteryHTML(params, ghostResult) {
       const p1cx = gridStartX + packPxWidth / 2;
       const p2cx = gridStartX + packPxWidth + packPxWidth / 2;
       const bottomY = gridStartY + gridPxDepth + 18;
-      arrows += '<path d="M' + p1cx + ' ' + (gridStartY + gridPxDepth + 4) +
-                ' Q' + p1cx + ' ' + (bottomY + 10) + ' ' + p2cx + ' ' + (bottomY + 10) +
-                '" stroke="#E24B4A" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>';
+      const arrowStartY = bmsStartY + 8;
+      const curveDepth = 16;
+      const curveY = arrowStartY + curveDepth;
       const pathLabelX = (p1cx + p2cx) / 2;
       const path = layout.serpentinePath.path;
       const path5 = layout.serpentinePath.path;
       const pack5 = layout.serpentinePath.grid[0][rows - 1]; // last of col1
       const pack5next = path5[path5.indexOf(pack5) + 1];     // next in series path
-      arrows += '<text x="' + pathLabelX + '" y="' + (bottomY + 28) +
-                '" font-size="10" text-anchor="middle" fill="#E24B4A"' +
+      arrows += '<path d="M' + p1cx + ' ' + arrowStartY +
+                ' Q' + p1cx + ' ' + curveY + ' ' + p2cx + ' ' + curveY +
+                '" stroke="#E24B4A" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>';
+      arrows += '<text x="' + (p1cx + 8) + '" y="' + (arrowStartY + curveDepth - 6) + '"' +
+                ' font-size="10" text-anchor="start" fill="#E24B4A"' +
                 ' font-family="Arial,sans-serif">#' + pack5 + ' → #' + pack5next + '</text>';
     }
 
@@ -173,7 +180,7 @@ function generateCustomBatteryHTML(params, ghostResult) {
       const pack10 = layout.serpentinePath.grid[1][0]; // top of col2
       const pack10next = path10[path10.indexOf(pack10) + 1]; // next in series path
       if (pack10 && pack10next) {
-        arrows += '<text x="' + ((p10cx + p11cx) / 2) + '" y="' + (topY - 20) +
+        arrows += '<text x="' + ((p10cx + p11cx) / 2) + '" y="' + (topY + 14) +
                   '" font-size="10" text-anchor="middle" fill="#E24B4A"' +
                   ' font-family="Arial,sans-serif">#' + pack10 + ' → #' + pack10next + '</text>';
       }
@@ -197,12 +204,12 @@ function generateCustomBatteryHTML(params, ghostResult) {
     // BMS zone rect
     const bmsRect = bmsEndY > bmsStartY + 20 ?
       '<rect x="' + caissonStartX + '" y="' + (bmsStartY + 4) +
-      '" width="' + caissonPxWidth + '" height="' + (bmsEndY - bmsStartY - 8) +
+      '" width="' + caissonPxWidth + '" height="' + bmsRectHeight +
       '" rx="3" fill="#f0f0f0" stroke="#cccccc" stroke-width="0.5" stroke-dasharray="4 3"/>' +
-      '<text x="' + (caissonStartX + caissonPxWidth / 2) + '" y="' + (bmsMidY) +
+      '<text x="' + (caissonStartX + caissonPxWidth * 0.65) + '" y="' + (bmsStartY + 18) +
       '" font-size="11" text-anchor="middle" fill="#888888"' +
       ' font-family="Arial,sans-serif">' + f2(layout.depthSpare) + '" remaining depth</text>' +
-      '<text x="' + (caissonStartX + caissonPxWidth / 2) + '" y="' + (bmsMidY + 16) +
+      '<text x="' + (caissonStartX + caissonPxWidth * 0.65) + '" y="' + (bmsStartY + 34) +
       '" font-size="11" text-anchor="middle" fill="#888888"' +
       ' font-family="Arial,sans-serif">BMS + wiring + fill weight</text>' : '';
 
@@ -279,9 +286,9 @@ function generateCustomBatteryHTML(params, ghostResult) {
   </text>
 
   <!-- Series direction labels (outside compartment) -->
-  <text x="${compStartX - 18}" y="${Math.round(compStartY + compPxDepth / 2)}"
+  <text x="${compStartX - 30}" y="${Math.round(compStartY + compPxDepth / 2)}"
         font-size="10" text-anchor="middle" fill="#E24B4A" font-family="Arial,sans-serif"
-        transform="rotate(-90,${compStartX - 18},${Math.round(compStartY + compPxDepth / 2)})">
+        transform="rotate(-90,${compStartX - 30},${Math.round(compStartY + compPxDepth / 2)})">
     series ↓ (col 1)
   </text>
 
@@ -348,13 +355,13 @@ function generateCustomBatteryHTML(params, ghostResult) {
   </text>
 
   <!-- Compartment depth (right side, vertical label) -->
- <line x1="${compStartX + Math.round(compPxWidth) + 148}" y1="${compStartY}"
-        x2="${compStartX + Math.round(compPxWidth) + 148}" y2="${compStartY + Math.round(compPxDepth)}"
+ <line x1="${compStartX + Math.round(compPxWidth) + 208}" y1="${compStartY}"
+        x2="${compStartX + Math.round(compPxWidth) + 208}" y2="${compStartY + Math.round(compPxDepth)}"
         stroke="#888888" stroke-width="0.5" marker-end="url(#arr)" marker-start="url(#arr)"/>
-  <text x="${compStartX + Math.round(compPxWidth) + 160}"
+  <text x="${compStartX + Math.round(compPxWidth) + 220}"
         y="${compStartY + compPxDepth / 2}"
         font-size="11" text-anchor="middle" fill="#555555" font-family="Arial,sans-serif"
-        transform="rotate(90,${compStartX + Math.round(compPxWidth) + 160},${compStartY + compPxDepth / 2})">
+        transform="rotate(90,${compStartX + Math.round(compPxWidth) + 220},${compStartY + compPxDepth / 2})">
     compartment ${f2(layout.compDepth)}" deep
   </text>
 </svg>`;
@@ -465,7 +472,7 @@ function generateCustomBatteryHTML(params, ghostResult) {
   </defs>
 
   <!-- Title -->
-  <text x="260" y="16" font-size="11" font-weight="500"
+  <text x="60" y="16" font-size="11" font-weight="500"
         font-family="Arial,sans-serif" fill="#1a1a1a">
     Front view — compartment ${f2(layout.compWidth)}" wide × ${f2(layout.compHeight)}" tall
     · scale ${scaleW}px/inch (W) × ${scaleH}px/inch (H)
@@ -494,16 +501,14 @@ function generateCustomBatteryHTML(params, ghostResult) {
   <rect x="${Math.round(caissonStartX + caissonPxWidth)}" y="${compStartY}"
         width="${Math.round(clearancePxWidth)}" height="${Math.round(compPxHeight)}"
         fill="#FFF3CD" opacity="0.4"/>
-  <text x="${compStartX + clearancePxWidth / 2}" y="${compStartY + compPxHeight / 2}"
-        font-size="9" text-anchor="middle" fill="#856404" font-family="Arial,sans-serif"
-        transform="rotate(-90,${compStartX + clearancePxWidth / 2},${compStartY + compPxHeight / 2})">
-    ${f2((layout.compWidth - layout.caissonWidth) / 2)}" fill
+  <text x="${compStartX + clearancePxWidth / 2}" y="${compStartY - 6}"
+        font-size="9" text-anchor="middle" fill="#856404" font-family="Arial,sans-serif">
+    ${f2((layout.compWidth - layout.caissonWidth) / 2)}"
   </text>
   <text x="${Math.round(caissonStartX + caissonPxWidth + clearancePxWidth / 2)}"
-        y="${compStartY + compPxHeight / 2}"
-        font-size="9" text-anchor="middle" fill="#856404" font-family="Arial,sans-serif"
-        transform="rotate(-90,${Math.round(caissonStartX + caissonPxWidth + clearancePxWidth / 2)},${compStartY + compPxHeight / 2})">
-    ${f2((layout.compWidth - layout.caissonWidth) / 2)}" fill
+        y="${compStartY - 6}"
+        font-size="9" text-anchor="middle" fill="#856404" font-family="Arial,sans-serif">
+    ${f2((layout.compWidth - layout.caissonWidth) / 2)}"
   </text>
 
   <!-- Caisson outline -->
@@ -577,8 +582,8 @@ function generateCustomBatteryHTML(params, ghostResult) {
         x2="${Math.round(gridStartX + cellPxWidth)}" y2="${ba5y}"
         stroke="#888888" stroke-width="0.5"
         marker-end="url(#arr2)" marker-start="url(#arr2)"/>
-  <text x="${gridStartX + cellPxWidth / 2}" y="${ba5t}" font-size="10"
-        text-anchor="middle" fill="#555555" font-family="Arial,sans-serif">
+  <text x="${Math.round(gridStartX + cellPxWidth) - 3}" y="${ba5t}" font-size="10"
+        text-anchor="end" fill="#555555" font-family="Arial,sans-serif">
     ${f2(cell.width)}" A
   </text>
 
@@ -587,9 +592,9 @@ function generateCustomBatteryHTML(params, ghostResult) {
     ' x2="' + Math.round(gridStartX + packPxWidth) + '" y2="' + ba5y + '"' +
     ' stroke="#888888" stroke-width="0.5"' +
     ' marker-end="url(#arr2)" marker-start="url(#arr2)"/>' +
-    '<text x="' + Math.round(gridStartX + cellPxWidth + cellPxWidth / 2) + '" y="' + ba5t + '"' +
-    ' font-size="10" text-anchor="middle" fill="#555555" font-family="Arial,sans-serif">' +
-    f2(cell.width) + '" B</text>' : ''}
+    '<text x="' + (Math.round(gridStartX + cellPxWidth) + 3) + '" y="' + ba5t + '"' +
+    ' font-size="10" text-anchor="start" fill="#555555" font-family="Arial,sans-serif">' +
+    f2(cell.width) + '" B</text>': ''}
 
 </svg>`;
   }
