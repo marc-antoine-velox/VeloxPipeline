@@ -789,85 +789,72 @@ function selectSimulations(dekaResult, eboxResult, params) {
     const plusBatteries = batteries24.filter(function(b) { return isVeloxPlusType(b); });
     let simIdx = 1;
 
+    // ── 24h Flex: 1 sim only, cap 275A ───────────────────────────────────
+    // If 18KVA charger (275A for 48V, 360A for 36V) exists, use it directly
+    // as the Flex charger — no injection needed, no second sim produced.
     const flex450 = flexBatteries.find(function(b) { return b.ah === 450; }) || flexBatteries[0];
     if (flex450) {
       const flexStartAmps = voltage === 80 ? 215 : 250;
-      const flexCh = findCharger(flexStartAmps) || chargers.find(function(c) { return c.amps >= flexStartAmps; }) || chargers[0];
+      const flexCapAmps   = voltage === 80 ? 215 : 275;
+      const kva18Amps     = voltage === 36 ? 360 : voltage === 48 ? 275 : voltage === 24 ? 400 : 0;
+      const kva18Charger  = kva18Amps > 0 ? findCharger(kva18Amps) : null;
+      const flexCh = kva18Charger ||
+                     findCharger(flexStartAmps) ||
+                     chargers.find(function(c) { return c.amps >= flexStartAmps && c.amps <= flexCapAmps; }) ||
+                     chargers[0];
       if (flexCh) {
-        const has18KVA = voltage <= 48 && findCharger(voltage === 36 ? 360 : 275) !== null;
         plans.push({
           battery_ah: flex450.ah, charger_amps: flexCh.amps, charger_model: flexCh.model,
-      truck_load: truckLoad, truck_efficiency: truckEff, lead_acid_ah: leadAcidAh,
-      compartment_w: compartW, shifts, shift_duration: shiftDur,
-      label: 'Sim ' + simIdx + ' — ' + flex450.ah + 'Ah + ' + flexCh.amps + 'A (VeloxFlex)',
-      battery_type: flex450.type || 'VeloxFlex', ebox: flex450.ebox || '',
-      conditional: false, simIndex: simIdx,
-      check18KVAThreshold: has18KVA
-    });
-    simIdx++;
-
-    // ── For 24h applications, also try faster chargers for Flex ──────────
-    const maxSafeAmps = Math.floor(flex450.ah * 0.80);
-    chargers.filter(function(c) {
-      return c.amps > flexCh.amps && c.amps <= maxSafeAmps;
-    }).forEach(function(fasterCh) {
-      plans.push({
-        battery_ah: flex450.ah, charger_amps: fasterCh.amps, charger_model: fasterCh.model,
-        truck_load: truckLoad, truck_efficiency: truckEff, lead_acid_ah: leadAcidAh,
-        compartment_w: compartW, shifts, shift_duration: shiftDur,
-        label: 'Sim ' + simIdx + ' — ' + flex450.ah + 'Ah + ' + fasterCh.amps + 'A (VeloxFlex)',
-        battery_type: flex450.type || 'VeloxFlex', ebox: flex450.ebox || '',
-        conditional: true, skipIfFlexPassed: true, simIndex: simIdx,
-        check18KVAThreshold: false
-      });
-      simIdx++;
-    });
-  }
-}
-
-    // VeloxPlus sequences
-    const plusChargerSequence = voltage === 80 ? [270, 335, 400]
-                              : voltage === 72 ? [310, 375, 475]
-                              : [320, 400, 360]; // 36V/48V: 320 GE → 24KVA(360/400) → 400 GE
-    const plus550 = plusBatteries.find(function(b) { return b.ah === 550; }) || plusBatteries[0];
-    const plus700 = plusBatteries.find(function(b) { return b.ah === 700; });
-
-    if (plus550) {
-      // For 36V/48V insert 24KVA between 320 and 400
-      const plusSeq = (voltage === 36 || voltage === 48) ? [320, 360, 400] : plusChargerSequence;
-      plusSeq.forEach(function(amps) {
-        const ch = findCharger(amps);
-        if (ch) {
-          plans.push({
-            battery_ah: plus550.ah, charger_amps: ch.amps, charger_model: ch.model,
-            truck_load: truckLoad, truck_efficiency: truckEff, lead_acid_ah: leadAcidAh,
-            compartment_w: compartW, shifts, shift_duration: shiftDur,
-            label: 'Sim ' + simIdx + ' — ' + plus550.ah + 'Ah + ' + ch.amps + 'A (VeloxPlus)',
-            battery_type: plus550.type || 'VeloxPlus', ebox: plus550.ebox || '',
-            conditional: false, simIndex: simIdx
-          });
-          simIdx++;
-        }
-      });
+          truck_load: truckLoad, truck_efficiency: truckEff, lead_acid_ah: leadAcidAh,
+          compartment_w: compartW, shifts, shift_duration: shiftDur,
+          label: 'Sim ' + simIdx + ' — ' + flex450.ah + 'Ah + ' + flexCh.amps + 'A (VeloxFlex)',
+          battery_type: flex450.type || 'VeloxFlex', ebox: flex450.ebox || '',
+          conditional: false, simIndex: simIdx,
+          check18KVAThreshold: false  // charger already selected optimally above
+          // TODO: add 320A threshold logic here when rule is defined
+        });
+        simIdx++;
+      }
     }
 
-    if (plus700) {
-      const plusSeq = (voltage === 36 || voltage === 48) ? [320, 360, 400] : plusChargerSequence;
-      plusSeq.forEach(function(amps, idx) {
-        const ch = findCharger(amps);
-        if (ch) {
-          plans.push({
-            battery_ah: plus700.ah, charger_amps: ch.amps, charger_model: ch.model,
-            truck_load: truckLoad, truck_efficiency: truckEff, lead_acid_ah: leadAcidAh,
-            compartment_w: compartW, shifts, shift_duration: shiftDur,
-            label: 'Sim ' + simIdx + ' — ' + plus700.ah + 'Ah + ' + ch.amps + 'A (VeloxPlus)',
-            battery_type: plus700.type || 'VeloxPlus', ebox: plus700.ebox || '',
-            conditional: true, skipIf550Passed: true, simIndex: simIdx,
-            dualPortCheck: (idx === plusSeq.length - 1)
-          });
-          simIdx++;
-        }
-      });
+    // VeloxPlus sequences
+    // ── 24h Plus: 1 sim only, highest charger available ──────────────────
+    const plus550 = plusBatteries.find(function(b) { return b.ah === 550; }) || plusBatteries[0];
+    const plus700 = plusBatteries.find(function(b) { return b.ah === 700; });
+    const plusTopSeq = voltage === 80 ? [400, 335, 270]
+                     : voltage === 72 ? [475, 375, 310]
+                     : [400, 360, 320];
+
+    if (plus550) {
+      const plusCh = plusTopSeq.reduce(function(found, amps) {
+        return found || findCharger(amps);
+      }, null);
+      if (plusCh) {
+        plans.push({
+          battery_ah: plus550.ah, charger_amps: plusCh.amps, charger_model: plusCh.model,
+          truck_load: truckLoad, truck_efficiency: truckEff, lead_acid_ah: leadAcidAh,
+          compartment_w: compartW, shifts, shift_duration: shiftDur,
+          label: 'Sim ' + simIdx + ' — ' + plus550.ah + 'Ah + ' + plusCh.amps + 'A (VeloxPlus)',
+          battery_type: plus550.type || 'VeloxPlus', ebox: plus550.ebox || '',
+          conditional: false, simIndex: simIdx
+        });
+        simIdx++;
+      }
+    } else if (plus700) {
+      const plusCh = plusTopSeq.reduce(function(found, amps) {
+        return found || findCharger(amps);
+      }, null);
+      if (plusCh) {
+        plans.push({
+          battery_ah: plus700.ah, charger_amps: plusCh.amps, charger_model: plusCh.model,
+          truck_load: truckLoad, truck_efficiency: truckEff, lead_acid_ah: leadAcidAh,
+          compartment_w: compartW, shifts, shift_duration: shiftDur,
+          label: 'Sim ' + simIdx + ' — ' + plus700.ah + 'Ah + ' + plusCh.amps + 'A (VeloxPlus)',
+          battery_type: plus700.type || 'VeloxPlus', ebox: plus700.ebox || '',
+          conditional: false, simIndex: simIdx
+        });
+        simIdx++;
+      }
     }
 
     // Deduplicate dealer combo from 24h plans too
@@ -944,18 +931,21 @@ function selectSimulations(dekaResult, eboxResult, params) {
     }
   }
 
-  // ── VeloxFlex 450Ah: 250A (or 215A for 80V) + 18KVA threshold check ──────
+  // ── VeloxFlex 450Ah: 1 sim only, cap 275A ────────────────────────────────
+  // If 18KVA charger exists for this voltage, use it directly (replaces 250A — no injection).
+  // TODO: add 320A threshold logic here when rule is defined
   const bat450 = effectiveBatteries.find(function(b) { return b.ah === 450; }) ||
                  effectiveBatteries.find(function(b) { return !isVeloxPlusType(b) && b.ah > 280; });
   if (bat450) {
     const flexStartAmps = voltage === 80 ? 215 : 250;
-    const ch1 = findCharger(flexStartAmps) ||
-                chargers.find(function(c) { return c.amps >= flexStartAmps; }) ||
+    const flexCapAmps   = voltage === 80 ? 215 : 275;
+    const kva18Amps     = voltage === 36 ? 360 : voltage === 48 ? 275 : voltage === 24 ? 400 : 0;
+    const kva18Charger  = kva18Amps > 0 ? findCharger(kva18Amps) : null;
+    const ch1 = kva18Charger ||
+                findCharger(flexStartAmps) ||
+                chargers.find(function(c) { return c.amps >= flexStartAmps && c.amps <= flexCapAmps; }) ||
                 chargers[0];
     if (ch1) {
-      // Check if 18KVA exists for this voltage (24V-48V only)
-      const kva18Amps  = voltage === 36 ? 360 : voltage === 48 ? 275 : voltage === 24 ? 400 : 0;
-      const has18KVA   = kva18Amps > 0 && findCharger(kva18Amps) !== null;
       plans.push({
         battery_ah: bat450.ah, charger_amps: ch1.amps, charger_model: ch1.model,
         truck_load: truckLoad, truck_efficiency: truckEff, lead_acid_ah: leadAcidAh,
@@ -963,39 +953,36 @@ function selectSimulations(dekaResult, eboxResult, params) {
         label: 'Sim ' + simIdx + ' — ' + bat450.ah + 'Ah + ' + ch1.amps + 'A (VeloxFlex)',
         battery_type: bat450.type || 'VeloxFlex', ebox: bat450.ebox || '',
         conditional: false, simIndex: simIdx,
-        check18KVAThreshold: has18KVA  // runPass will inject 18KVA sim if threshold met
+        check18KVAThreshold: false  // charger already selected optimally above
       });
       simIdx++;
-      // Placeholder index reserved for potential 18KVA injection by runPass
-      if (has18KVA) simIdx++;
     }
   }
 
-  // ── VeloxPlus sequences ───────────────────────────────────────────────────
+ // ── VeloxPlus: 1 sim only, highest charger available ─────────────────────
+  // For 2×8h: gating in runPass still applies (skips if Flex passed ≤210% utilization)
   const plusBat = effectiveBatteries.find(function(b) { return isVeloxPlusType(b); });
   if (plusBat) {
-    var plusSequence;
-    if (voltage === 80)      plusSequence = [270, 335, 400];
-    else if (voltage === 72) plusSequence = [310, 375, 475];
-    else                     plusSequence = [320, 360, 400]; // 36V/48V: GE 320 → 24KVA → GE 400
-
-    plusSequence.forEach(function(amps, idx) {
-      const ch = findCharger(amps);
-      if (ch) {
-        plans.push({
-          battery_ah: plusBat.ah, charger_amps: ch.amps, charger_model: ch.model,
-          truck_load: truckLoad, truck_efficiency: truckEff, lead_acid_ah: leadAcidAh,
-          compartment_w: compartW, shifts, shift_duration: shiftDur,
-          label: 'Sim ' + simIdx + ' — ' + plusBat.ah + 'Ah + ' + ch.amps + 'A (VeloxPlus)',
-          battery_type: plusBat.type || 'VeloxPlus', ebox: plusBat.ebox || '',
-          isVeloxPlusPlan: true,
-          isFirstPlus: idx === 0,
-          conditional: false, // gating now handled in runPass via utilization check
-          simIndex: simIdx
-        });
-        simIdx++;
-      }
-    });
+    const plusTopSeq = voltage === 80 ? [400, 335, 270]
+                     : voltage === 72 ? [475, 375, 310]
+                     : [400, 360, 320];
+    const plusCh = plusTopSeq.reduce(function(found, amps) {
+      return found || findCharger(amps);
+    }, null);
+    if (plusCh) {
+      plans.push({
+        battery_ah: plusBat.ah, charger_amps: plusCh.amps, charger_model: plusCh.model,
+        truck_load: truckLoad, truck_efficiency: truckEff, lead_acid_ah: leadAcidAh,
+        compartment_w: compartW, shifts, shift_duration: shiftDur,
+        label: 'Sim ' + simIdx + ' — ' + plusBat.ah + 'Ah + ' + plusCh.amps + 'A (VeloxPlus)',
+        battery_type: plusBat.type || 'VeloxPlus', ebox: plusBat.ebox || '',
+        isVeloxPlusPlan: true,
+        isFirstPlus: true,
+        conditional: false,
+        simIndex: simIdx
+      });
+      simIdx++;
+    }
   }
 
   // Remove any standard plan that duplicates the dealer-specified combo
@@ -1635,7 +1622,10 @@ if (!params.voltage || params.voltage === 0) {
   const compartmentH = compartmentDims[2] || 0;
   const eboxResult = verifyEbox(compartmentW, params.voltage, compartmentL, compartmentH);
   if (eboxResult.total_compatible === 0) {
-    sendFlagEmail(params, 'AUCUNE_BATTERIE_COMPATIBLE', 'Aucune batterie pour ' + compartmentW + '".', params.thread);
+    const eboxFailDetails = eboxResult.fitting_eboxes.length > 0
+  ? 'Eboxes physiquement compatibles: ' + eboxResult.fitting_eboxes.join(', ') + ' — mais aucune batterie assignée à ces Eboxes.'
+  : 'Aucun Ebox ne rentre dans ce compartiment (L: ' + compartmentL + '" x W: ' + compartmentW + '" x H: ' + compartmentH + '"). EBOX01 requiert min 38.44" L, EBOX02 requiert min 38.69" L.';
+sendFlagEmail(params, 'AUCUNE_BATTERIE_COMPATIBLE', eboxFailDetails, params.thread);
     return;
   }
   if (eboxResult.has_avoid_only) pipelineFlags.push('BATTERIES_A_EVITER_SEULEMENT');
