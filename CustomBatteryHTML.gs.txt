@@ -37,8 +37,8 @@ function generateCustomBatteryHTML(params, ghostResult) {
     const grid      = layout.serpentinePath.grid;
 
     // Scale: depth 10px/inch, width 14px/inch
-    const scaleD = 8;
-    const scaleW = 12;
+    const scaleD = 6;
+    const scaleW = 9;
 
     // Pack pixel dimensions
     const packPxDepth = layout.packDepth * scaleD;   // e.g. 6.85×10=68.5
@@ -152,28 +152,30 @@ function generateCustomBatteryHTML(params, ghostResult) {
                 '" stroke="#E24B4A" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>';
       const pathLabelX = (p1cx + p2cx) / 2;
       const path = layout.serpentinePath.path;
-      const pack5  = layout.serpentinePath.grid[0][rows - 1]; // bottom of col1
-      const pack6  = layout.serpentinePath.grid[1][grid[1].filter(function(p){return p!==null;}).length - 1]; // bottom of col2
+      const path5 = layout.serpentinePath.path;
+      const pack5 = layout.serpentinePath.grid[0][rows - 1]; // last of col1
+      const pack5next = path5[path5.indexOf(pack5) + 1];     // next in series path
       arrows += '<text x="' + pathLabelX + '" y="' + (bottomY + 28) +
                 '" font-size="10" text-anchor="middle" fill="#E24B4A"' +
-                ' font-family="Arial,sans-serif">#' + pack5 + ' → #' + pack6 + '</text>';
+                ' font-family="Arial,sans-serif">#' + pack5 + ' → #' + pack5next + '</text>';
     }
 
     // Top connection col2→col3 (if exists)
     if (cols > 2) {
       const p10cx = gridStartX + packPxWidth + packPxWidth / 2;
       const p11cx = gridStartX + 2 * packPxWidth + packPxWidth / 2;
-      const topY  = gridStartY - 18;
+      const topY  = gridStartY - 32;
       arrows += '<path d="M' + p10cx + ' ' + (gridStartY - 4) +
                 ' Q' + p10cx + ' ' + (topY - 10) + ' ' + p11cx + ' ' + (topY - 10) +
                 '" stroke="#E24B4A" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>';
       const path = layout.serpentinePath.path;
-      const pack10 = layout.serpentinePath.grid[1][0]; // top of col2 (going up)
-      const pack11 = layout.serpentinePath.grid[2][0]; // top of col3 (going down)
-      if (pack10 && pack11) {
+      const path10 = layout.serpentinePath.path;
+      const pack10 = layout.serpentinePath.grid[1][0]; // top of col2
+      const pack10next = path10[path10.indexOf(pack10) + 1]; // next in series path
+      if (pack10 && pack10next) {
         arrows += '<text x="' + ((p10cx + p11cx) / 2) + '" y="' + (topY - 20) +
                   '" font-size="10" text-anchor="middle" fill="#E24B4A"' +
-                  ' font-family="Arial,sans-serif">#' + pack10 + ' → #' + pack11 + '</text>';
+                  ' font-family="Arial,sans-serif">#' + pack10 + ' → #' + pack10next + '</text>';
       }
     }
 
@@ -298,15 +300,15 @@ function generateCustomBatteryHTML(params, ghostResult) {
   <text x="${annoX + 8}" y="${ra1ty}" font-size="10" fill="#555555"
         font-family="Arial,sans-serif">${f2(layout.packDepth)}" / pack</text>
 
-  <line x1="${annoX + 20}" y1="${ra2y1}" x2="${annoX + 20}" y2="${ra2y2}"
+  <line x1="${annoX + 88}" y1="${ra2y1}" x2="${annoX + 88}" y2="${ra2y2}"
         stroke="#22863a" stroke-width="0.5" marker-end="url(#arr)" marker-start="url(#arr)"/>
-  <text x="${annoX + 28}" y="${ra2ty}" font-size="11" fill="#22863a"
+  <text x="${annoX + 96}" y="${ra2ty}" font-size="11" fill="#22863a"
         font-family="Arial,sans-serif">${f2(layout.depthUsed)}" packs ✓</text>
 
   ${layout.depthSpare > 0.5 ?
-    '<line x1="' + (annoX + 20) + '" y1="' + ra3y1 + '" x2="' + (annoX + 20) + '" y2="' + ra3y2 + '"' +
+    '<line x1="' + (annoX + 88) + '" y1="' + ra3y1 + '" x2="' + (annoX + 88) + '" y2="' + ra3y2 + '"' +
     ' stroke="#888888" stroke-width="0.5" marker-end="url(#arr)" marker-start="url(#arr)"/>' +
-    '<text x="' + (annoX + 28) + '" y="' + ra3ty + '" font-size="11" fill="#555555"' +
+    '<text x="' + (annoX + 96) + '" y="' + ra3ty + '" font-size="11" fill="#555555"' +
     ' font-family="Arial,sans-serif">' + f2(layout.depthSpare) + '" spare</text>' : ''}
 
   <!-- Bottom annotations -->
@@ -346,13 +348,13 @@ function generateCustomBatteryHTML(params, ghostResult) {
   </text>
 
   <!-- Compartment depth (right side, vertical label) -->
-  <line x1="${compStartX + Math.round(compPxWidth) + 50}" y1="${compStartY}"
-        x2="${compStartX + Math.round(compPxWidth) + 50}" y2="${compStartY + Math.round(compPxDepth)}"
+ <line x1="${compStartX + Math.round(compPxWidth) + 148}" y1="${compStartY}"
+        x2="${compStartX + Math.round(compPxWidth) + 148}" y2="${compStartY + Math.round(compPxDepth)}"
         stroke="#888888" stroke-width="0.5" marker-end="url(#arr)" marker-start="url(#arr)"/>
-  <text x="${compStartX + Math.round(compPxWidth) + 62}"
+  <text x="${compStartX + Math.round(compPxWidth) + 160}"
         y="${compStartY + compPxDepth / 2}"
         font-size="11" text-anchor="middle" fill="#555555" font-family="Arial,sans-serif"
-        transform="rotate(90,${compStartX + Math.round(compPxWidth) + 62},${compStartY + compPxDepth / 2})">
+        transform="rotate(90,${compStartX + Math.round(compPxWidth) + 160},${compStartY + compPxDepth / 2})">
     compartment ${f2(layout.compDepth)}" deep
   </text>
 </svg>`;
@@ -363,8 +365,8 @@ function generateCustomBatteryHTML(params, ghostResult) {
     const cols = layout.cols;
 
     // Scale: width 14px/inch, height 10px/inch
-    const scaleW = 12;
-    const scaleH = 8;
+   const scaleW = 9;
+    const scaleH = 6;
 
     const packPxWidth  = layout.packWidth * scaleW;
     const packPxHeight = layout.packHeight * scaleH;
@@ -420,10 +422,7 @@ function generateCustomBatteryHTML(params, ghostResult) {
       const lastPack  = Math.max.apply(null, layout.serpentinePath.grid[c].filter(function(p) { return p !== null; }));
       packCols += '<text x="' + Math.round(centerX) + '" y="' + Math.round(gridStartY + packPxHeight / 2 - 6) +
                   '" font-size="10" text-anchor="middle" fill="' + colors.text +
-                  '" font-family="Arial,sans-serif">Packs #' + firstPack + '–#' + lastPack + '</text>';
-      packCols += '<text x="' + Math.round(centerX) + '" y="' + Math.round(gridStartY + packPxHeight / 2 + 8) +
-                  '" font-size="9" text-anchor="middle" fill="' + colors.text +
-                  '" font-family="Arial,sans-serif">(col ' + (c + 1) + ')</text>';
+                  '" font-family="Arial,sans-serif">#' + firstPack + '–#' + lastPack + '</text>';
     }
 
     // Remaining height zone
@@ -531,10 +530,10 @@ function generateCustomBatteryHTML(params, ghostResult) {
     '<text x="' + (annoX + 8) + '" y="' + (cellHeightY2 + remainPxHeight / 2 + 4) + '"' +
     ' font-size="11" fill="#555555" font-family="Arial,sans-serif">' + f2(layout.heightSpare) + '" spare</text>' : ''}
 
-  <line x1="${annoX + 20}" y1="${compStartY}" x2="${annoX + 20}" y2="${compStartY + Math.round(compPxHeight)}"
+  <line x1="${annoX + 98}" y1="${compStartY}" x2="${annoX + 98}" y2="${compStartY + Math.round(compPxHeight)}"
         stroke="#888888" stroke-width="0.5"
         marker-end="url(#arr2)" marker-start="url(#arr2)"/>
-  <text x="${annoX + 28}" y="${compHeightMid}" font-size="11" fill="#555555"
+  <text x="${annoX + 106}" y="${compHeightMid}" font-size="11" fill="#555555"
         font-family="Arial,sans-serif">${f2(layout.compHeight)}" tall</text>
 
   <!-- Bottom annotations -->
@@ -580,7 +579,7 @@ function generateCustomBatteryHTML(params, ghostResult) {
         marker-end="url(#arr2)" marker-start="url(#arr2)"/>
   <text x="${gridStartX + cellPxWidth / 2}" y="${ba5t}" font-size="10"
         text-anchor="middle" fill="#555555" font-family="Arial,sans-serif">
-    ${f2(cell.width)}" cell
+    ${f2(cell.width)}" A
   </text>
 
   ${layout.cellsPerPack > 1 ?
@@ -590,7 +589,7 @@ function generateCustomBatteryHTML(params, ghostResult) {
     ' marker-end="url(#arr2)" marker-start="url(#arr2)"/>' +
     '<text x="' + Math.round(gridStartX + cellPxWidth + cellPxWidth / 2) + '" y="' + ba5t + '"' +
     ' font-size="10" text-anchor="middle" fill="#555555" font-family="Arial,sans-serif">' +
-    f2(cell.width) + '" cell B</text>' : ''}
+    f2(cell.width) + '" B</text>' : ''}
 
 </svg>`;
   }
@@ -657,7 +656,7 @@ function generateCustomBatteryHTML(params, ghostResult) {
 <div class="page">
   <h2>Top-down view — ${layout.cols} columns × ${layout.rows} rows</h2>
   <p class="sub">Looking into the compartment from above. Depth axis = vertical (going into forklift). Width axis = horizontal.</p>
-  <div class="svg-wrap">${buildFrontViewSVG()}</div>
+  <div class="svg-wrap">${buildTopDownSVG()}</div>
   <div class="legend">
     <span class="leg-item"><span class="swatch" style="background:#B5D4F4;border:1px solid #378ADD;"></span> Col 1 cell A</span>
     <span class="leg-item"><span class="swatch" style="background:#85B7EB;border:1px solid #378ADD;"></span> Col 1 cell B</span>
@@ -667,6 +666,7 @@ function generateCustomBatteryHTML(params, ghostResult) {
     <span class="leg-item"><span class="swatch" style="background:#EF9F27;border:1px solid #BA7517;"></span> Col 3 cell B</span>
     <span class="leg-item"><span class="swatch" style="background:#FFF3CD;border:1px solid #856404;"></span> Fill / clearance</span>
     <span class="leg-item"><span style="color:#E24B4A;font-weight:500;">→</span> Series path</span>
+</div>
   </div>
 </div>`;
 
@@ -712,9 +712,15 @@ function generateCustomBatteryHTML(params, ghostResult) {
          color: #1a1a1a; background: white; padding: 24px; }
   h1 { font-size: 18px; font-weight: 600; margin-bottom: 4px; color: #1a1a1a; }
   h2 { font-size: 14px; font-weight: 500; margin-bottom: 12px; color: #444444; }
-  .page { margin-bottom: 0; page-break-after: always; page-break-inside: avoid; }
-  .svg-wrap { page-break-inside: avoid; }
+  .page { margin-bottom: 0; page-break-after: always; page-break-inside: avoid; break-inside: avoid; }
+  .svg-wrap { page-break-inside: avoid; break-inside: avoid; display: block; }
   .page:last-child { page-break-after: avoid; }
+  svg { display: block; max-width: 100%; }
+  @media print {
+    body { padding: 12px; }
+    .page { page-break-after: always; break-after: page; }
+    .page:last-child { page-break-after: avoid; break-after: avoid; }
+  }
   .section-title { font-size: 11px; font-weight: 600; color: #555555;
                    text-transform: uppercase; letter-spacing: 0.5px;
                    margin: 16px 0 6px; border-bottom: 0.5px solid #dddddd;
@@ -805,7 +811,7 @@ function testCustomBatteryHTML_AMOD() {
     {
       method:      'post',
       contentType: 'application/json',
-      payload:     JSON.stringify({ html: html }),
+      payload:     JSON.stringify({ html: html, pageFormat: 'Letter' }),
       muteHttpExceptions: true
     }
   );
@@ -813,6 +819,64 @@ function testCustomBatteryHTML_AMOD() {
   if (response.getResponseCode() === 200) {
     const blob = response.getBlob().setContentType('application/pdf');
     blob.setName('DEBUG_CustomBattery_AMOD.pdf');
+    folder.createFile(blob);
+    Logger.log('PDF saved to Drive');
+  } else {
+    Logger.log('Cloud Run error: ' + response.getResponseCode() + ' — ' +
+               response.getContentText().substring(0, 200));
+  }
+}
+
+function testCustomBatteryHTML_EFG320() {
+  const params = {
+    dealer:                'Toromont Manutention',
+    customer:              'Non spécifié',
+    forklift_manufacturer: 'Jungheinrich',
+    forklift_model:        'EFG320',
+    voltage:               48,
+    shifts:                3,
+    shift_duration:        8,
+    use_type:              'average',
+    shift_start_hour:      7
+  };
+
+  const layout = calculateCustomBattery('32.68 x 29.06 x 24.69', 48, 550);
+  if (!layout) {
+    Logger.log('testCustomBatteryHTML_EFG320: no layout found — aborting');
+    return;
+  }
+
+  const mockGhostResult = {
+    layout:       layout,
+    targetAh:     550,
+    achievedAh:   layout.achievedAh,
+    chargerAmps:  320,
+    chargerModel: 'IHF-GE0-64803-80/320E',
+    maxEff:       85,
+    workHours:    '17h00',
+    results:      { min_soc: 25, status: 'PASS', battery_used_pct: 195 },
+    chargingEvents: []
+  };
+
+  const html = generateCustomBatteryHTML(params, mockGhostResult);
+
+  const folder = DriveApp.getFolderById('1j1ADg0s02dKVdcCoGOZQl9IbCWt7k7Ba');
+  const file   = folder.createFile('DEBUG_CustomBattery_EFG320.html', html, 'text/html');
+  Logger.log('HTML saved: ' + file.getUrl());
+
+  const response = UrlFetchApp.fetch(
+    'https://velox-pdf-service-414761682351.us-central1.run.app/generate-pdf',
+    {
+      method:      'post',
+      contentType: 'application/json',
+      payload:     JSON.stringify({ html: html, pageFormat: 'Letter' }),
+      muteHttpExceptions: true
+    }
+  );
+
+  if (response.getResponseCode() === 200) {
+    const blob = response.getBlob().setContentType('application/pdf');
+    blob.setName('DEBUG_CustomBattery_EFG320.pdf');
     folder.createFile(blob);
     Logger.log('PDF saved to Drive');
   } else {
