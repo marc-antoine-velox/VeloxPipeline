@@ -1621,7 +1621,7 @@ if (!params.voltage || params.voltage === 0) {
   const compartmentL = compartmentDims[0] || 0;
   const compartmentH = compartmentDims[2] || 0;
   const eboxResult = verifyEbox(compartmentW, params.voltage, compartmentL, compartmentH);
- if (eboxResult.total_compatible === 0) {
+  if (eboxResult.total_compatible === 0) {
     const eboxFailDetails = eboxResult.fitting_eboxes.length > 0
       ? 'Eboxes physiquement compatibles: ' + eboxResult.fitting_eboxes.join(', ') + ' — mais aucune batterie assignée à ces Eboxes.'
       : 'Aucun Ebox ne rentre dans ce compartiment (L: ' + compartmentL + '" x W: ' + compartmentW + '" x H: ' + compartmentH + '"). EBOX01 requiert min 38.44" L, EBOX02 requiert min 38.69" L.';
