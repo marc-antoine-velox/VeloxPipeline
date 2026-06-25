@@ -72,10 +72,12 @@ function normalizeDealer(extractedDealer, knownDealers) {
 
   // Explicit alias — Hansler variants → Leavitt Machinery
   const ALIASES = {
-    'HANSLER':         'Leavitt Machinery',
-    'HANSLER/LEAVITT': 'Leavitt Machinery',
-    'HANSLER LEAVITT': 'Leavitt Machinery',
-    'ELEX':            'Elevex'
+    'HANSLER':              'Leavitt Machinery',
+    'HANSLER/LEAVITT':      'Leavitt Machinery',
+    'HANSLER LEAVITT':      'Leavitt Machinery',
+    'ELEX':                 'Elevex',
+    'TOROMONT MANUTENTION': 'Toromont',
+    'TOROMONT CAT':         'Toromont'
   };
   if (ALIASES[input]) {
     Logger.log('Dealer alias applied: "' + extractedDealer + '" → "' + ALIASES[input] + '"');
@@ -1650,20 +1652,23 @@ if (!params.voltage || params.voltage === 0) {
 
         Logger.log('Custom battery full sim: eff=' + maxEff + '% work=' + workHours.formatted);
 
+        // Read SOC from sheet immediately — sheet still has last sim's data
+        const customSOC = readAllSOC();
+
         // ── 2. Build allSimResults entry shaped like normal pipeline ─────────
         const shiftDesc = params.shifts + 'x' + (params.shift_duration || 8) + 'h';
-      const customSimEntry = {
+        const customSimEntry = {
           passed:            simResults.status === 'PASS',
-          battery_ah:        ghostResult.achievedAh,
+          battery_ah:        ghostResult.targetAh,
           charger_amps:      ghostResult.chargerAmps,
           charger_model:     ghostResult.chargerModel,
           battery_type:      'VeloxCustom',
-          battery_label:     '[CUSTOM] VeloxCustom ' + params.voltage + 'V ' + ghostResult.achievedAh + 'Ah',
+          battery_label:     '[CUSTOM] VeloxCustom ' + params.voltage + 'V ' + ghostResult.targetAh + 'Ah',
           ebox:              'CUSTOM',
           max_efficiency:    maxEff,
           work_hours:        workHours.formatted,
           results:           simResults,
-          soc_over_time:     simResults.soc_over_time || [],
+          soc_over_time:     customSOC,
           chargingEvents:    chargingEvents,
           truck_load:        fullPlan.truck_load,
           label:             'Sim 1 — ' + ghostResult.achievedAh + 'Ah + ' + ghostResult.chargerAmps + 'A (VeloxCustom)',
@@ -1673,7 +1678,7 @@ if (!params.voltage || params.voltage === 0) {
 
         // ── 3. Generate Portée PDF via normal HTML generator ─────────────────
         const porteeParams = Object.assign({}, params, {
-          battery_ah:    ghostResult.achievedAh,
+          battery_ah:    ghostResult.targetAh,
           charger_amps:  ghostResult.chargerAmps,
           charger_model: ghostResult.chargerModel,
           battery_type:  'VeloxCustom',
@@ -1682,7 +1687,7 @@ if (!params.voltage || params.voltage === 0) {
         const porteePdfBlob = buildHTMLPortee(
           porteeParams,
           [customSimEntry],
-          [simResults.soc_over_time || []]
+          [customSOC]
         );
 
         // ── 4. Log to LOGS sheet ─────────────────────────────────────────────
@@ -1701,7 +1706,12 @@ if (!params.voltage || params.voltage === 0) {
           scenario:         'CUSTOM_BATTERY'
         }), simResults, 1);
 
-        // ── 5. Generate custom battery assessment PDF ────────────────────────
+        // ── 5. Take Data Entry screenshot ────────────────────────────────────
+        // Sheet already has max efficiency sim from findMaxEfficiency — just capture
+        Utilities.sleep(5000);
+        const customDataPdf = capturePdf(porteeParams, fullPlan, 1, '');
+
+        // ── 6. Generate custom battery assessment PDF ────────────────────────
         const customHtml    = generateCustomBatteryHTML(params, ghostResult);
         const customPdfResp = UrlFetchApp.fetch(
           'https://velox-pdf-service-414761682351.us-central1.run.app/generate-pdf',
@@ -1715,44 +1725,37 @@ if (!params.voltage || params.voltage === 0) {
         const customPdfName = 'VeloxCustom_' + (params.forklift_manufacturer || '') + '_' +
                               (params.forklift_model || '') + '_' + params.voltage + 'V_' + shiftDesc + '.pdf';
 
-        // ── 6. Send internal email to quote@ + marc-antoine@ with PDF ────────
-        const emailSubject = '[CUSTOM BATTERY — À VALIDER] ' +
-                             (params.dealer || '') + ' | ' +
-                             (params.forklift_manufacturer || '') + ' ' + (params.forklift_model || '') + ' ' +
-                             params.voltage + 'V ' + shiftDesc;
-
-        const emailBody = '[ CUSTOM BATTERY — VALIDATION REQUISE ]\n\n' +
-                          'Dealer:    ' + (params.dealer || '—') + '\n' +
-                          'Client:    ' + (params.customer || '—') + '\n' +
-                          'Chariot:   ' + (params.forklift_manufacturer || '') + ' ' + (params.forklift_model || '') + '\n' +
-                          'Voltage:   ' + params.voltage + 'V\n' +
-                          'Shifts:    ' + shiftDesc + '\n\n' +
-                          '[ RÉSULTAT SIMULATION ]\n' +
-                          'Batterie:  VeloxCustom ' + params.voltage + 'V ' + ghostResult.achievedAh + 'Ah (EVE 280Ah)\n' +
-                          'Chargeur:  ' + ghostResult.chargerAmps + 'A (' + (ghostResult.chargerModel || '—') + ')\n' +
-                          'Autonomie: ' + workHours.formatted + '\n' +
-                          'Eff. max:  ' + maxEff + '%\n' +
-                          'Statut:    ' + (simResults.status === 'PASS' ? '✓ PASS' : '✗ FAIL') + '\n\n' +
-                          'PDF interne en pièce jointe. Valider le design avant de répondre au dealer.\n' +
-                          'La Portée est disponible dans LOGS pour envoi après validation.\n\n' +
-                          'Marc-Antoine\nVelox Power Systems';
-
-        const emailAttachments = [];
+        // ── 7. Assemble all PDFs — Portée first, then screenshot, then assessment
+        const allCustomPdfs = [];
+        if (porteePdfBlob) allCustomPdfs.push(porteePdfBlob);
+        if (customDataPdf) allCustomPdfs.push(customDataPdf);
         if (customPdfResp.getResponseCode() === 200) {
           const customPdfBlob = customPdfResp.getBlob().setContentType('application/pdf');
           customPdfBlob.setName(customPdfName);
-          emailAttachments.push(customPdfBlob);
+          allCustomPdfs.push(customPdfBlob);
         } else {
           Logger.log('Custom battery PDF Cloud Run error: ' + customPdfResp.getResponseCode());
         }
 
-        GmailApp.sendEmail('quote@veloxpower.com', emailSubject, emailBody, {
-          cc:          'marc-antoine@veloxpower.com',
-          attachments: emailAttachments,
-          name:        'Velox Pipeline'
-        });
+        // ── 8. Send via standard pipeline review email ───────────────────────
+        const customChargingEvents = buildChargingEvents(
+          params.shifts, params.shift_duration || 8, [], 0, params.shift_start_hour
+        );
+        sendPipelineReviewEmail(
+          Object.assign({}, porteeParams, {
+            notes: '[CUSTOM BATTERY — À VALIDER] EVE ' + ghostResult.achievedAh + 'Ah — Valider avant envoi dealer'
+          }),
+          [Object.assign({}, customSimEntry, { simNumber: 1, screenshotIndex: 0 })],
+          ['CUSTOM_BATTERY_AUTO_GENERATED'],
+          customChargingEvents,
+          customChargingEvents,
+          allCustomPdfs,
+          0,
+          60,
+          false
+        );
 
-        Logger.log('Custom battery: email sent to quote@ + marc-antoine@ | Portée in LOGS');
+        Logger.log('Custom battery: review email sent | Portée + screenshot + assessment attached');
 
       } catch (e) {
         Logger.log('Custom battery path error: ' + e.message + '\n' + e.stack);
