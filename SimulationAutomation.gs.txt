@@ -194,7 +194,7 @@ Rules:
   HYSTER: models starting with E with decimal notation (E1.5, E2.0, E2.5, E3.0, E3.5, E4.0, E5.0, E6.0, E7.0, E8.0), H, J, S, K, N, XT, RS, W
   YALE: models starting with ERP, GLP, GDP, MR, MS, MP, OS, MC, MTC
   HYUNDAI: models starting with 15BT, 20BT, 25BT, 30BT, 35BT, 40BT, 15B, 20B, 25B, 30B, 35B, HBF
-  BOBCAT/DOOSAN: models starting with BC, B15, B18, B20, B25, B30, B35, B40, D15, D20, D25
+  BOBCAT/DOOSAN: models starting with BC, B15, B18, B20, B25, B30, B35, B40, B50, D15, D20, D25
   JUNGHEINRICH: models starting with EFG, ETV, ETM, ERE, ECE, EJE, ESE, EME, EKS, EZS
   STILL: models starting with RX20, RX50, RX60, RX70, FM-X, MX, EK, LTX, EFG
   MITSUBISHI: models starting with FB, FBC, FBE, FG, FGE, FD
@@ -234,6 +234,7 @@ Rules:
 - When a forklift model contains a slash (/) and both sides look like variant codes (e.g. "C40S/C50S", "C30TT/QM"), this means two variants are listed together — always extract only the FIRST variant before the slash. Example: "4750-C40S/C50S" → "4750-C40S", "4460-C30TT/QM" → "4460-C30TT". Exception: if the slash is part of a capacity or mast designation like "E50/600HL" or "E25/600HL", keep the full string — these follow the pattern of digits/digits.
 - When multiple truck options are listed (Option 1, Option 2, etc.), always populate the trucks array with each option as a separate truck object — never leave trucks as []
 - customer is NEVER a forklift manufacturer brand name (Linde, Toyota, Crown, etc.)
+- Bobcat models starting with "EB" are a data entry error — always drop the leading "E" (e.g. "EB50X-7" → "B50X-7", "EB30X" → "B30X")
 - When a range of daily hours is given (e.g. "3 or 4 hours", "between 3 and 5 hours"), always use the HIGHEST value for shift_duration or work hours calculation.
 - shifts must be 1, 2, or 3 — OR return 0 if the email references a previous quote or setup WITHOUT explicitly stating a shift count in the email body (e.g. "same setup as the E30", "même config", "comme avant", "same as before"). If references_previous is true and no shift count is explicitly written, always return shifts: 0. Shifts means distinct crew changes in a day, NOT the number of work periods. A truck that works, then sits, then works again within the same day without a crew change is 1 shift, not 2. A truck that starts at time X, has an idle window mid-day, and ends at time Y with no crew change is always 1 shift. Calculate shift_duration as the total span from first start to last end time (e.g. 6AM to 6PM = 12h shift_duration).
 - shift_duration is 8 by default. Set to 12 if: the email mentions "12 hour shift", "12h shift", "quart de 12 heures", "2x12", OR if the truck's working day spans 12 hours based on stated start and end times (e.g. starts at 6am and ends at 6pm = 12h). Calculate from the first start time to the last end time of the working day when specific times are given. - If the email states total daily hours across multiple shifts (e.g. "running 8-14 hours a day on 2 shifts"), divide total hours by shift count and round up to nearest standard interval (8 or 12) to get shift_duration.
