@@ -238,6 +238,7 @@ Rules:
 - shifts must be 1, 2, or 3 — OR return 0 if the email references a previous quote or setup WITHOUT explicitly stating a shift count in the email body (e.g. "same setup as the E30", "même config", "comme avant", "same as before"). If references_previous is true and no shift count is explicitly written, always return shifts: 0. Shifts means distinct crew changes in a day, NOT the number of work periods. A truck that works, then sits, then works again within the same day without a crew change is 1 shift, not 2. A truck that starts at time X, has an idle window mid-day, and ends at time Y with no crew change is always 1 shift. Calculate shift_duration as the total span from first start to last end time (e.g. 6AM to 6PM = 12h shift_duration).
 - shift_duration is 8 by default. Set to 12 if: the email mentions "12 hour shift", "12h shift", "quart de 12 heures", "2x12", OR if the truck's working day spans 12 hours based on stated start and end times (e.g. starts at 6am and ends at 6pm = 12h). Calculate from the first start time to the last end time of the working day when specific times are given. - If the email states total daily hours across multiple shifts (e.g. "running 8-14 hours a day on 2 shifts"), divide total hours by shift count and round up to nearest standard interval (8 or 12) to get shift_duration.
 - If daily work hours are stated as 4 or fewer (e.g. "about 3 hours a day", "roughly 4 hours"), default shifts to 1 unless explicitly stated otherwise.
+- If the email mentions annual hours (e.g. "1800 hours per year", "2000h/year", "environ 1500 heures par année"), use this rule to infer shifts: 1800h/year or below → shifts: 1. Above 1800h/year, leave shifts: 0 so the pipeline runs both 2x8h and 3x8h defaults.
 - shift_duration is ALWAYS 8 or 12 — never set it to the number of daily work hours. If the truck works 3 hours a day, shift_duration is still 8 and shifts is 1. Daily work hours affect target_efficiency only, not shift_duration.
 - If the email states daily work hours that are less than 8 (e.g. "about 3 hours a day", "3 to 4 hours", "roughly 3 hours"), this ALWAYS means: shifts: 1, shift_duration: 8, and target_efficiency: round((stated_hours / 8) * 100). Never return shifts: 0 in this case. Example: "about 3 hours a day" → shifts: 1, shift_duration: 8, target_efficiency: 38. "3 or 4 hours" → shifts: 1, shift_duration: 8, target_efficiency: 50.
 - voltage: ALWAYS check the email subject line AND body for voltage. Look for patterns like "80v", "80V", "48v", "48V" anywhere in the text including the subject. The voltage often appears next to the model name like "Linde E30 80v". Never return 0 if a voltage number followed by V appears anywhere in the subject or body.
@@ -2836,6 +2837,21 @@ function removePendingTrigger() {
 // TEST FUNCTIONS
 // ─────────────────────────────────────────────────────────────────────────────
 
+function testLindeE50_2shifts_12h() {
+  const params = {
+    dealer: 'Elevex', customer: 'Produits Forestiers Laval',
+    forklift_manufacturer: 'LINDE', forklift_model: 'E50/600HL',
+    voltage: 0, shifts: 2, shift_duration: 12, use_type: 'average',
+    battery_ah: 0, charger_amps: 0,
+    heating_option: false, ip54_charger: false,
+    special_equipment: '', custom_charge_times: [],
+    stated_charge_minutes_per_shift: 60,
+    sender_name: 'Kevin Bayne', sender_email: 'kevin@battelec.ca',
+    email_subject: 'Test Pipeline — Linde E50/600HL 2 shifts 12h DOUBLE SCENARIO'
+  };
+  runSimulationPipeline(params);
+}
+
 function testLindeE50_3shifts() {
   const params = {
     dealer: 'Elevex', customer: 'Produits Forestiers Laval',
@@ -2845,6 +2861,19 @@ function testLindeE50_3shifts() {
     heating_option: false, ip54_charger: false,
     special_equipment: '', custom_charge_times: [],
     email_subject: 'Test Pipeline — Linde E50/600HL 3 shifts'
+  };
+  runSimulationPipeline(params);
+}
+
+function testArterraWines_SC5225() {
+  const params = {
+    dealer: 'Battelec', customer: 'Vins Arterra Canada',
+    forklift_manufacturer: 'CROWN', forklift_model: 'SC5225-35',
+    voltage: 48, shifts: 2, shift_duration: 8, use_type: 'heavy',
+    battery_ah: 0, charger_amps: 0,
+    heating_option: false, ip54_charger: false,
+    special_equipment: '', custom_charge_times: [],
+    email_subject: 'TR: Demande de batterie Lithium et charger — Arterra Crown SC5225-35'
   };
   runSimulationPipeline(params);
 }
@@ -3324,6 +3353,17 @@ if (params.dealer) {
   Logger.log('Trigger check complete');
 }
 
+function getImageDimensions(fileId) {
+  var bytes = DriveApp.getFileById(fileId).getBlob().getBytes();
+  var isPNG = (bytes[1] == 80 && bytes[2] == 78 && bytes[3] == 71);
+  if (isPNG) {
+    var w = ((bytes[16]&0xFF)<<24)|((bytes[17]&0xFF)<<16)|((bytes[18]&0xFF)<<8)|(bytes[19]&0xFF);
+    var h = ((bytes[20]&0xFF)<<24)|((bytes[21]&0xFF)<<16)|((bytes[22]&0xFF)<<8)|(bytes[23]&0xFF);
+    return { width: w, height: h };
+  }
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SEND TO DEALER — called from custom menu in LOGS sheet
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3551,7 +3591,6 @@ function sendToDealerFromRow() {
 
   var messages = thread.getMessages();
 var externalAddresses = [];
-var internalAddresses = [];
 var seenAddresses = {};
 
 var isMarc = function(addr) {
@@ -3565,6 +3604,16 @@ var extractEmails = function(str) {
   return str.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
 };
 
+// Detect forwarder from thread messages
+var forwardedByQuote = false;
+var forwardedByCarolane = false;
+messages.forEach(function(msg) {
+  var from = msg.getFrom().toLowerCase();
+  if (from.includes('quote@veloxpower.com')) forwardedByQuote = true;
+  if (from.includes('carolane@veloxpower.com')) forwardedByCarolane = true;
+});
+
+// Collect external (dealer) addresses
 messages.forEach(function(msg) {
   var allAddresses = []
     .concat(extractEmails(msg.getFrom()))
@@ -3574,25 +3623,27 @@ messages.forEach(function(msg) {
   allAddresses.forEach(function(addr) {
     var clean = addr.toLowerCase().replace(/.*<(.+)>/, '$1').trim();
     if (!clean || seenAddresses[clean] || isMarc(clean)) return;
+    if (!isExternal(addr)) return; // skip internal addresses
     seenAddresses[clean] = true;
-    if (isExternal(addr)) {
-      externalAddresses.push(addr);
-    } else {
-      internalAddresses.push(addr);
-    }
+    externalAddresses.push(addr);
   });
 });
 
-// Always ensure quote@veloxpower.com is in CC
-var quoteAddr = 'quote@veloxpower.com';
-var quoteClean = quoteAddr.toLowerCase();
-if (!seenAddresses[quoteClean]) {
-  internalAddresses.push(quoteAddr);
-  seenAddresses[quoteClean] = true;
+// ── Build To/CC based on who forwarded ───────────────────────────────────
+var toList, ccList;
+if (forwardedByQuote) {
+  // Quote forwarded — reply to quote only, no dealer
+  toList = 'quote@veloxpower.com';
+  ccList = '';
+} else if (forwardedByCarolane) {
+  // Carolane forwarded — reply to carolane, CC quote
+  toList = 'carolane@veloxpower.com';
+  ccList = 'quote@veloxpower.com';
+} else {
+  // Dealer contacted directly — reply to dealer, CC quote
+  toList = externalAddresses.join(', ');
+  ccList = 'quote@veloxpower.com';
 }
-
-var toList  = externalAddresses.join(', ');
-var ccList  = internalAddresses.join(', ');
 
   // ── Confirm and send ──────────────────────────────────────────────────────
   var ui = SpreadsheetApp.getUi();
@@ -3803,6 +3854,10 @@ function _parseWorkHoursToMinutes(workStr) {
   return isNaN(n) ? 0 : Math.round(n * 60);
 }
 
+function _esc2(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
 function _prescanVoltage(emailText) {
   var text = emailText.toUpperCase();
   var voltages = [96, 80, 72, 48, 36, 24];
@@ -3812,6 +3867,275 @@ function _prescanVoltage(emailText) {
     if (regex.test(text)) return v;
   }
   return 0;
+}
+
+function testJ35XNT_1shift12h() {
+  const params = {
+    dealer: 'Battelec Canada', customer: 'Big Country Raw',
+    forklift_manufacturer: 'HYSTER', forklift_model: 'J35XNT',
+    voltage: 36, shifts: 1, shift_duration: 12, use_type: 'moderate',
+    battery_ah: 0, charger_amps: 0,
+    heating_option: false, ip54_charger: false,
+    compartment: '39.00 x 25.30 x 23.90',
+    shift_start_hour: 6,
+    custom_charge_times: [
+      { label: 'Idle Charge', start: '9:00 AM', end: '11:00 AM' },
+      { label: 'S1 Break', start: '3:00 PM', end: '3:15 PM' }
+    ],
+    stated_charge_minutes_per_shift: 0,
+    sender_name: 'Patrick McCourt', sender_email: 'pat@battelec-ca.com',
+    email_subject: 'Test J35XNT 1x12h shift_start_hour + idle window'
+  };
+  runSimulationPipeline(params);
+}
+
+function testLinde_3shift_moderate() {
+  const params = {
+    dealer: 'Alliance Equipment', customer: 'Brampton Logistics',
+    forklift_manufacturer: 'LINDE', forklift_model: 'E35',
+    voltage: 80, shifts: 3, shift_duration: 8, use_type: 'moderate',
+    battery_ah: 0, charger_amps: 0,
+    heating_option: false, ip54_charger: false,
+    compartment: '',
+    shift_start_hour: 7,
+    custom_charge_times: [],
+    stated_charge_minutes_per_shift: 0,
+    sender_name: 'Erick Davis', sender_email: 'erick@alliance.com',
+    email_subject: 'Test Linde E35 3x8h moderate 18KVA charger test'
+  };
+  runSimulationPipeline(params);
+}
+
+function testCrown_2shift_statedMins() {
+  const params = {
+    dealer: 'Battelec Canada', customer: 'Maple Logistics',
+    forklift_manufacturer: 'CROWN', forklift_model: 'SC5225-35',
+    voltage: 48, shifts: 2, shift_duration: 8, use_type: 'average',
+    battery_ah: 0, charger_amps: 0,
+    heating_option: false, ip54_charger: false,
+    compartment: '',
+    shift_start_hour: 7,
+    custom_charge_times: [],
+    stated_charge_minutes_per_shift: 45,
+    sender_name: 'Ram Bains', sender_email: 'ram@battelec-ca.com',
+    email_subject: 'Test Crown SC5225 2x8h double scenario 45min stated'
+  };
+  runSimulationPipeline(params);
+}
+
+function testToyota_1shift_8h_ip54() {
+  const params = {
+    dealer: 'Elevex', customer: 'Northern Frozen Foods',
+    forklift_manufacturer: 'TOYOTA', forklift_model: '8FBE15U',
+    voltage: 48, shifts: 1, shift_duration: 8, use_type: 'heavy',
+    battery_ah: 0, charger_amps: 0,
+    heating_option: true, ip54_charger: true,
+    compartment: '',
+    shift_start_hour: 6,
+    custom_charge_times: [],
+    stated_charge_minutes_per_shift: 0,
+    sender_name: 'Steve Arsenault', sender_email: 'steve@elevex.com',
+    email_subject: 'Test Toyota 8FBE15U 1x8h heavy IP54 heating'
+  };
+  runSimulationPipeline(params);
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIM DB — MIGRATION & LOOKUP
+// ─────────────────────────────────────────────────────────────────────────────
+
+function migrateROIToSimDB() {
+  const SS_ID    = '1Nv6OZ1-3afIrsyZ4E0MtQ7oA4xZ7QDToMqFhhAFAdD4';
+  const ROI_ID   = '1bE29ahToJDIfDS62mh0cO4EKbQJlichhMfHGA_ERyT4';
+  const ss       = SpreadsheetApp.openById(SS_ID);
+  const simDb    = ss.getSheetByName('SIM DB');
+  const roiSS    = SpreadsheetApp.openById(ROI_ID);
+
+  // Pre-load Deka Pull data once
+  var dekaData    = null;
+  var dekaHeaders = {};
+  try {
+    var dekaSheet = SpreadsheetApp.openById('1HWGd1NCsbMFy9fzAgeC4LjU9kIdmKdAItG2hg-rTHV0').getSheetByName('DATA');
+    dekaData = dekaSheet.getDataRange().getValues();
+    var dh = dekaData[0];
+    dekaHeaders = {
+      mfg:   dh.indexOf('Manufacturer'),
+      model: dh.indexOf('Model'),
+      volt:  dh.indexOf('Voltage'),
+      ah:    dh.indexOf('AhCapacity'),
+      comp:  dh.indexOf('Compartment')
+    };
+    Logger.log('Deka data pre-loaded: ' + (dekaData.length - 1) + ' rows');
+  } catch(e) {
+    Logger.log('Deka pre-load failed: ' + e.message);
+  }
+
+  // Pre-load Chargeurs data once
+  var chargeursData = null;
+  try {
+    chargeursData = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Chargeurs').getDataRange().getValues();
+    Logger.log('Chargeurs data pre-loaded: ' + (chargeursData.length - 1) + ' rows');
+  } catch(e) {
+    Logger.log('Chargeurs pre-load failed: ' + e.message);
+  }
+
+  const dealerTabs = ['Battelec', 'Elevex', 'Hansler/Leavitt', 'Wajax', 'Toromont', 'Brandt'];
+  const rows = [];
+
+  dealerTabs.forEach(function(tabName) {
+    const sheet = roiSS.getSheetByName(tabName);
+    if (!sheet) { Logger.log('Tab not found: ' + tabName); return; }
+
+    const data    = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const colIdx  = function(name) { return headers.indexOf(name); };
+
+    for (var i = 1; i < data.length; i++) {
+      const row = data[i];
+      const forklift    = String(row[colIdx('Forklift')]     || '').trim();
+      const battery     = String(row[colIdx('Battery')]      || '').trim();
+      const charger     = String(row[colIdx('Charger')]      || '').trim();
+      const application = String(row[colIdx('Application')]  || '').trim();
+      const client      = String(row[colIdx('Client')]       || '').trim();
+      const date        = row[colIdx('Date')];
+
+      if (!forklift && !battery && !client) continue;
+      if (forklift === 'Forklift') continue;
+
+      // ── Parse voltage ─────────────────────────────────────────────────────
+      var voltage = 0;
+      var voltMatch = (battery + ' ' + forklift).match(/(\d+)\s*[Vv]/);
+      if (voltMatch) voltage = parseInt(voltMatch[1]);
+
+      // ── Parse battery Ah and type ─────────────────────────────────────────
+      var batteryAh   = 0;
+      var batteryType = '';
+      var ahMatch = battery.match(/(\d+)\s*[Aa]h/);
+      if (ahMatch) batteryAh = parseInt(ahMatch[1]);
+      if (battery.toUpperCase().includes('VELOXPLUS') || battery.toUpperCase().includes('VELOX PLUS')) {
+        batteryType = 'VeloxPlus';
+      } else if (battery.toUpperCase().includes('VELOXFLEX') || battery.toUpperCase().includes('VELOX FLEX')) {
+        batteryType = 'VeloxFlex';
+      } else if (battery.toUpperCase().includes('VELOXMAX') || battery.toUpperCase().includes('VELOX MAX')) {
+        batteryType = 'VeloxMax';
+      }
+
+      // ── Parse charger amps ────────────────────────────────────────────────
+      var chargerAmps = 0;
+      var chargerMatch = charger.match(/(\d+)\s*[Aa]/);
+      if (chargerMatch) chargerAmps = parseInt(chargerMatch[1]);
+
+      // ── Parse shifts ──────────────────────────────────────────────────────
+      var shifts = 0;
+      var shiftMatch = application.match(/(\d+)\s*[Ss]hift/);
+      if (shiftMatch) shifts = parseInt(shiftMatch[1]);
+      if (shifts === 0) {
+        if (application.includes('3')) shifts = 3;
+        else if (application.includes('2')) shifts = 2;
+        else if (application.includes('1')) shifts = 1;
+      }
+
+      // ── Parse shift duration ──────────────────────────────────────────────
+      var shiftDuration = 8;
+      if (application.includes('12')) shiftDuration = 12;
+
+      // ── Parse use type ────────────────────────────────────────────────────
+      var useType = 'average';
+      var appLower = application.toLowerCase();
+      if (appLower.includes('heavy') || appLower.includes('lourde') ||
+          appLower.includes('winery') || appLower.includes('cold') ||
+          appLower.includes('paper') || appLower.includes('arterra') ||
+          appLower.includes('goodfellow')) {
+        useType = 'heavy';
+      } else if (appLower.includes('moderate') || appLower.includes('modér')) {
+        useType = 'moderate';
+      }
+
+      // ── Parse forklift manufacturer and model ─────────────────────────────
+      var fabricant = '';
+      var modele    = forklift.replace(/\s*\d+[Vv]\s*/, '').trim();
+      var brands    = ['LINDE','TOYOTA','CROWN','RAYMOND','HYSTER','YALE','HYUNDAI',
+                       'BOBCAT','DOOSAN','JUNGHEINRICH','STILL','MITSUBISHI','CATERPILLAR',
+                       'CLARK','HELI','HANGCHA','NOBLELIFT','SANY','UNICARRIERS','WAJAX',
+                       'KOMATSU','NISSAN','KALMAR','TCM','BT','ATLET'];
+      brands.forEach(function(b) {
+        if (forklift.toUpperCase().includes(b)) { fabricant = b; }
+      });
+      if (fabricant) modele = modele.replace(new RegExp(fabricant, 'i'), '').trim();
+
+      // ── Format date ───────────────────────────────────────────────────────
+      var dateStr = '';
+      if (date instanceof Date && !isNaN(date)) {
+        dateStr = Utilities.formatDate(date, 'America/Toronto', 'yyyy-MM-dd');
+      }
+
+      // ── Lookup Lead_Acid_Ah and Compartment_W via lookupDekaPull ─────────
+      var leadAcidAh   = '';
+      var compartmentW = '';
+      if (fabricant && modele) {
+        try {
+          var dekaResult = lookupDekaPull(fabricant, modele, voltage, {}, dekaData);
+          var bestMatch  = (dekaResult.exact_matches  && dekaResult.exact_matches[0])  ||
+                           (dekaResult.fuzzy_matches  && dekaResult.fuzzy_matches[0]);
+          if (bestMatch) {
+            leadAcidAh   = bestMatch.ah             || '';
+            compartmentW = bestMatch.compartment_full || '';
+          }
+        } catch(e) {
+          Logger.log('Deka lookup failed for ' + fabricant + ' ' + modele + ': ' + e.message);
+        }
+      }
+
+      // ── Lookup Charger_Model from pre-loaded Chargeurs data ───────────────
+      var chargerModel = '';
+      if (chargeursData && chargerAmps > 0 && voltage > 0) {
+        try {
+          var chHeaders = chargeursData[0];
+          var chVoltCol = chHeaders.indexOf('A ' + voltage + 'V');
+          if (chVoltCol >= 0) {
+            for (var c = 1; c < chargeursData.length; c++) {
+              var chAmps = Number(chargeursData[c][chVoltCol]);
+              if (chAmps === chargerAmps) {
+                chargerModel = String(chargeursData[c][0] || '').trim();
+                break;
+              }
+            }
+          }
+        } catch(e) {
+          Logger.log('Charger model lookup failed: ' + e.message);
+        }
+      }
+
+      rows.push([
+        tabName,        // A - Dealer
+        client,         // B - Client
+        fabricant,      // C - Fabricant
+        modele,         // D - Modèle
+        voltage,        // E - Voltage
+        shifts,         // F - Shifts
+        shiftDuration,  // G - Shift_Duration
+        useType,        // H - Use_Type
+        batteryAh,      // I - Battery_Ah
+        batteryType,    // J - Battery_Type
+        chargerAmps,    // K - Charger_Amps
+        chargerModel,   // L - Charger_Model
+        compartmentW,   // M - Compartment_W
+        leadAcidAh,     // N - Lead_Acid_Ah
+        'ROI_SHEET',    // O - Source
+        dateStr,        // P - Date
+        application     // Q - Notes
+      ]);
+    }
+  });
+
+  if (rows.length > 0) {
+    const startRow = simDb.getLastRow() + 1;
+    simDb.getRange(startRow, 1, rows.length, 17).setValues(rows);
+    Logger.log('Migrated ' + rows.length + ' rows to SIM DB');
+  } else {
+    Logger.log('No rows found to migrate');
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4021,6 +4345,155 @@ const today = now.toLocaleString('en-CA', { timeZone: 'America/Toronto' }).repla
   }
 }
 
+function clearSimDB() {
+  const ss    = SpreadsheetApp.openById('1Nv6OZ1-3afIrsyZ4E0MtQ7oA4xZ7QDToMqFhhAFAdD4');
+  const simDb = ss.getSheetByName('SIM DB');
+  if (simDb.getLastRow() > 1) {
+    simDb.deleteRows(2, simDb.getLastRow() - 1);
+  }
+  Logger.log('SIM_DB cleared');
+}
+
+function migrateSIMDB() {
+  const ss    = SpreadsheetApp.openById('1Nv6OZ1-3afIrsyZ4E0MtQ7oA4xZ7QDToMqFhhAFAdD4');
+  const simDb = ss.getSheetByName('SIM DB');
+
+  // Read existing data
+  const existing = simDb.getDataRange().getValues();
+  const oldHeaders = existing[0];
+  const oldRows = existing.slice(1);
+
+  Logger.log('Migration: found ' + oldRows.length + ' existing rows');
+
+  // New headers
+  const newHeaders = [
+    'Date', 'Dealer', 'Client', 'Fabricant', 'Modèle', 'Forklift_Count',
+    'Voltage', 'Shifts', 'Shift_Duration', 'Use_Type', 'Lead_Acid_Ah',
+    'Battery_Ah', 'Battery_Type', 'Charger_Amps', 'Charger_Model',
+    'Compartment', 'Efficiency_%', 'Work_Hours', 'Charge_Minutes',
+    'Charge_Constraint', 'Source', 'Language', 'Status', 'Outcome',
+    'Sold_Combo', 'Dealer_Contact', 'Dealer_Email', 'Gmail_Thread_ID',
+    'Email_Subject', 'Portée_PDF_ID', 'Notes'
+  ];
+
+  // Map old column indexes (based on current writeToSimDB order)
+  // Old: A=Dealer, B=Client, C=Fabricant, D=Modèle, E=Voltage, F=Shifts,
+  //      G=Shift_Duration, H=Use_Type, I=Battery_Ah, J=Battery_Type,
+  //      K=Charger_Amps, L=Charger_Model, M=Compartment, N=Lead_Acid_Ah,
+  //      O=Source, P=Date, Q=Notes(Email_Subject)
+
+  // Deduplicate — keep most recent per dealer+client+model+voltage+shifts+shift_duration
+  const deduped = {};
+  oldRows.forEach(function(row) {
+    if (!row[0] && !row[1] && !row[3]) return; // skip empty rows
+    const key = [
+      String(row[0]).trim().toLowerCase(), // dealer
+      String(row[1]).trim().toLowerCase(), // client
+      String(row[3]).trim().toLowerCase(), // model
+      String(row[4]),                       // voltage
+      String(row[5]),                       // shifts
+      String(row[6])                        // shift_duration
+    ].join('|');
+
+    // Keep most recent (compare date at col P = index 15)
+    if (!deduped[key]) {
+      deduped[key] = row;
+    } else {
+      const existingDate = new Date(deduped[key][15] || 0);
+      const newDate      = new Date(row[15] || 0);
+      if (newDate > existingDate) deduped[key] = row;
+    }
+  });
+
+  const dedupedRows = Object.values(deduped);
+  Logger.log('Migration: kept ' + dedupedRows.length + ' rows after dedup (' + (oldRows.length - dedupedRows.length) + ' removed)');
+
+  // Map to new 31-column structure
+  const newRows = dedupedRows.map(function(row) {
+    return [
+      row[15] || '',   // A - Date (was col P)
+      row[0]  || '',   // B - Dealer
+      row[1]  || '',   // C - Client
+      row[2]  || '',   // D - Fabricant
+      row[3]  || '',   // E - Modèle
+      '',              // F - Forklift_Count (new — blank)
+      row[4]  || '',   // G - Voltage
+      row[5]  || '',   // H - Shifts
+      row[6]  || '',   // I - Shift_Duration
+      row[7]  || '',   // J - Use_Type
+      row[13] || '',   // K - Lead_Acid_Ah (was col N)
+      row[8]  || '',   // L - Battery_Ah
+      row[9]  || '',   // M - Battery_Type
+      row[10] || '',   // N - Charger_Amps
+      row[11] || '',   // O - Charger_Model
+      row[12] || '',   // P - Compartment
+      '',              // Q - Efficiency_% (new — blank)
+      '',              // R - Work_Hours (new — blank)
+      '',              // S - Charge_Minutes (new — blank)
+      'STANDARD',      // T - Charge_Constraint (default)
+      row[14] || '',   // U - Source (was col O)
+      '',              // V - Language (new — blank)
+      'ENVOYÉE',       // W - Status (default)
+      'TBD',           // X - Outcome (default)
+      '',              // Y - Sold_Combo (new — blank)
+      '',              // Z - Dealer_Contact (new — blank)
+      '',              // AA - Dealer_Email (new — blank)
+      '',              // AB - Gmail_Thread_ID (new — blank)
+      row[16] || '',   // AC - Email_Subject (was col Q)
+      '',              // AD - Portée_PDF_ID (new — blank)
+      ''               // AE - Notes
+    ];
+  });
+
+  // Clear and rewrite
+  simDb.clearContents();
+  simDb.getRange(1, 1, 1, newHeaders.length).setValues([newHeaders]);
+  if (newRows.length > 0) {
+    simDb.getRange(2, 1, newRows.length, newHeaders.length).setValues(newRows);
+  }
+
+  // Format header row
+  simDb.getRange(1, 1, 1, newHeaders.length).setFontWeight('bold');
+
+  Logger.log('Migration complete — ' + newRows.length + ' rows written with 31-column structure');
+}
+
+function testLindeKMod_2shift_8h() {
+  const params = {
+    dealer: 'Leavitt Machinery', customer: 'Leavitt Industrial',
+    forklift_manufacturer: 'LINDE', forklift_model: 'K-MOD',
+    voltage: 48, shifts: 2, shift_duration: 8, use_type: 'average',
+    battery_ah: 0, charger_amps: 0,
+    heating_option: false, ip54_charger: false,
+    compartment: '40.47 x 21.00 x 30.90',
+    shift_start_hour: 7,
+    custom_charge_times: [],
+    stated_charge_minutes_per_shift: 0,
+    sender_name: 'James Barber', sender_email: 'jbarber@leavittig.com',
+    email_subject: 'Test Linde K-MOD 48V 2x8h standard',
+    _skipSimDb: true
+  };
+  runSimulationPipeline(params);
+}
+
+function testAMod_customWeightboxFlag() {
+  const params = {
+    dealer: 'Leavitt Machinery', customer: 'Leavitt Industrial',
+    forklift_manufacturer: 'LINDE', forklift_model: 'A-MOD',
+    voltage: 48, shifts: 2, shift_duration: 8, use_type: 'average',
+    battery_ah: 0, charger_amps: 0,
+    heating_option: false, ip54_charger: false,
+    compartment: '47.90 x 16.75 x 30.88',
+    shift_start_hour: 7,
+    custom_charge_times: [],
+    stated_charge_minutes_per_shift: 0,
+    sender_name: 'James Barber', sender_email: 'jbarber@leavittig.com',
+    email_subject: 'Test A-MOD custom weightbox flag',
+    _skipSimDb: true
+  };
+  runSimulationPipeline(params);
+}
+
 function queueTruckSimulation(truckParams, originalParams, threadId) {
   const ss        = SpreadsheetApp.openById('1Nv6OZ1-3afIrsyZ4E0MtQ7oA4xZ7QDToMqFhhAFAdD4');
   let queueSheet  = ss.getSheetByName('QUEUE');
@@ -4115,3 +4588,253 @@ function processQueuedTrucks() {
   Logger.log('No PENDING items in QUEUE');
 }
 
+function testOCROnCanvaPDF() {
+  var fileId = '14YCPgidM8wibD186GtUn_7KDfZ_fNtSj';
+  
+  var pdfBlob = DriveApp.getFileById(fileId).getBlob();
+  
+  var resource = {
+    name: 'temp_ocr_test',
+    mimeType: 'application/vnd.google-apps.document'
+  };
+  
+  var docFile = Drive.Files.create(resource, pdfBlob, {
+    ocrLanguage: 'fr',
+    fields: 'id'
+  });
+  
+  var doc = DocumentApp.openById(docFile.id);
+  var text = doc.getBody().getText();
+  
+  DriveApp.getFileById(docFile.id).setTrashed(true);
+  
+  Logger.log(text);
+}
+
+function repopulateSIMDBFromLogs() {
+  const ss     = SpreadsheetApp.openById('1Nv6OZ1-3afIrsyZ4E0MtQ7oA4xZ7QDToMqFhhAFAdD4');
+  const logs   = ss.getSheetByName('LOGS');
+  const simDb  = ss.getSheetByName('SIM DB');
+  const chargeurs = ss.getSheetByName('Chargeurs');
+
+  // Build charger lookup map: voltage|amps → PN
+  const chargeursData = chargeurs.getDataRange().getValues();
+  const chargeursHead = chargeursData[0];
+  const voltageColMap = {
+    24: chargeursHead.indexOf('A 24V'),
+    36: chargeursHead.indexOf('A 36V'),
+    48: chargeursHead.indexOf('A 48V'),
+    72: chargeursHead.indexOf('A 72V'),
+    80: chargeursHead.indexOf('A 80V'),
+    96: chargeursHead.indexOf('A 96V')
+  };
+
+  const chargerLookup = {};
+  chargeursData.slice(1).forEach(function(row) {
+    const pn = String(row[0] || '').trim();
+    if (!pn) return;
+    Object.keys(voltageColMap).forEach(function(volt) {
+      const col = voltageColMap[volt];
+      if (col < 0) return;
+      const amps = Number(row[col] || 0);
+      if (amps > 0) {
+        const key = volt + '|' + amps;
+        if (!chargerLookup[key]) chargerLookup[key] = pn;
+      }
+    });
+  });
+
+  Logger.log('Charger lookup built: ' + Object.keys(chargerLookup).length + ' entries');
+
+  const logData = logs.getDataRange().getValues();
+  const heads   = logData[0];
+  const rows    = logData.slice(1);
+
+  // LOGS column indexes
+  const iDate      = heads.indexOf('Date/Heure');
+  const iDealer    = heads.indexOf('Dealer');
+  const iClient    = heads.indexOf('Client');
+  const iSender    = heads.indexOf('Expéditeur');
+  const iMfg       = heads.indexOf('Fabricant');
+  const iModel     = heads.indexOf('Modèle');
+  const iVoltage   = heads.indexOf('Voltage');
+  const iComp      = heads.indexOf('Compart. W (po)');
+  const iBattType  = heads.indexOf('Battery_Type');
+  const iCharModel = heads.indexOf('Charger_Model');
+  const iAh        = heads.indexOf('Ah Lithium');
+  const iAmps      = heads.indexOf('Ampères');
+  const iShifts    = heads.indexOf('Shifts');
+  const iWork      = heads.indexOf('Hrs Travail/Shift');
+  const iEff       = heads.indexOf('Efficacité %');
+  const iStatus    = heads.indexOf('Statut');
+  const iUseType   = heads.indexOf('Use Type');
+  const iLA        = heads.indexOf('Ah Réf. LA');
+  const iTruckLoad = heads.indexOf('Truck Load A/hm');
+  const iThread    = heads.indexOf('Thread Gmail');
+  const iNotes     = heads.indexOf('Notes/Flags');
+  const iSubject   = heads.indexOf('Sujet Email');
+  const iScenario  = heads.indexOf('Scénario');
+  const iLang      = heads.indexOf('Langue courriel');
+  const iPdfId     = heads.indexOf('Portée PDF ID');
+  const iGroupKey  = heads.indexOf('Grouping Key');
+
+  // Filter: only PASS or REVIEW with a grouping key
+  const validRows = rows.filter(function(row) {
+    const status   = String(row[iStatus]   || '');
+    const groupKey = String(row[iGroupKey] || '');
+    return (status === 'PASS' || status === 'REVIEW') && groupKey !== '';
+  });
+
+  Logger.log('repopulate: ' + validRows.length + ' valid LOGS rows found');
+
+  // Group by grouping key + model + shifts + scenario
+  const groups = {};
+  validRows.forEach(function(row) {
+    const groupKey = String(row[iGroupKey] || '');
+    const model    = String(row[iModel]    || '');
+    const shifts   = String(row[iShifts]   || '');
+    const scenario = String(row[iScenario] || 'STANDARD');
+    const key      = groupKey + '|' + model + '|' + shifts + '|' + scenario;
+
+    if (!groups[key]) {
+      groups[key] = {
+        date:       row[iDate],
+        dealer:     row[iDealer],
+        client:     row[iClient],
+        sender:     row[iSender],
+        mfg:        row[iMfg],
+        model:      model,
+        voltage:    row[iVoltage],
+        comp:       row[iComp],
+        shifts:     row[iShifts],
+        work:       row[iWork],
+        useType:    row[iUseType],
+        la:         row[iLA],
+        thread:     row[iThread],
+        subject:    row[iSubject],
+        scenario:   scenario,
+        lang:       row[iLang],
+        pdfId:      row[iPdfId] || '',
+        battAhs:    [],
+        battTypes:  [],
+        charAmps:   [],
+        charModels: [],
+        effs:       []
+      };
+    }
+
+    // Infer Battery_Type from dedicated column or Notes
+    const battTypeRaw = String(row[iBattType] || '');
+    const notes       = String(row[iNotes]    || '').toUpperCase();
+    const inferredBattType = battTypeRaw
+      ? battTypeRaw
+      : (notes.includes('VELOXPLUS') || notes.includes('VELOX PLUS'))
+        ? 'VeloxPlus' : 'VeloxFlex';
+
+    // Infer Charger_Model from dedicated column or lookup
+    const charModelRaw = String(row[iCharModel] || '');
+    const voltage      = Number(row[iVoltage]   || 0);
+    const amps         = Number(row[iAmps]       || 0);
+    const lookupKey    = voltage + '|' + amps;
+    const inferredCharModel = charModelRaw
+      ? charModelRaw
+      : (chargerLookup[lookupKey] || '');
+
+    groups[key].battAhs.push(String(row[iAh] || ''));
+    groups[key].battTypes.push(inferredBattType);
+    groups[key].charAmps.push(String(amps || ''));
+    groups[key].charModels.push(inferredCharModel);
+    groups[key].effs.push(Number(row[iEff] || 0));
+
+    // Keep latest PDF ID
+    if (row[iPdfId]) groups[key].pdfId = row[iPdfId];
+  });
+
+  Logger.log('repopulate: ' + Object.keys(groups).length + ' unique groups found');
+
+  // Deduplicate — keep most recent per dealer+client+model+voltage+shifts+scenario
+  const deduped = {};
+  Object.values(groups).forEach(function(g) {
+    const dedupKey = [
+      String(g.dealer  || '').trim().toLowerCase(),
+      String(g.client  || '').trim().toLowerCase(),
+      String(g.model   || '').trim().toLowerCase(),
+      String(g.voltage || ''),
+      String(g.shifts  || ''),
+      String(g.scenario || 'STANDARD')
+    ].join('|');
+
+    if (!deduped[dedupKey]) {
+      deduped[dedupKey] = g;
+    } else {
+      const existDate = new Date(deduped[dedupKey].date || 0);
+      const newDate   = new Date(g.date || 0);
+      if (newDate > existDate) deduped[dedupKey] = g;
+    }
+  });
+
+  Logger.log('repopulate: ' + Object.keys(deduped).length + ' rows after dedup');
+
+  // Build SIM DB rows
+  const newRows = Object.values(deduped).map(function(g) {
+    const uniqueBattAh   = [...new Set(g.battAhs)].join(', ');
+    const uniqueBattType = [...new Set(g.battTypes)].join(', ');
+    const uniqueCharAmps = [...new Set(g.charAmps)].join(', ');
+    const uniqueCharMod  = [...new Set(g.charModels.filter(Boolean))].join(', ');
+    const bestEff        = Math.max(...g.effs);
+
+    // Extract sender name and email
+    const senderRaw   = String(g.sender || '');
+    const emailMatch  = senderRaw.match(/[\w.-]+@[\w.-]+\.\w+/);
+    const senderEmail = emailMatch ? emailMatch[0] : '';
+    const senderName  = senderRaw.replace(senderEmail, '').trim();
+
+    const chargeConstraint = String(g.scenario || '').includes('CONTRAINTE')
+                             ? 'CONTRAINTE' : 'STANDARD';
+    const chargeMins = String(g.scenario || '').includes('45min') ? 45
+                     : String(g.scenario || '').includes('60min') ? 60
+                     : 60;
+
+    return [
+      Utilities.formatDate(new Date(g.date), 'America/Toronto', 'yyyy-MM-dd'), // A - Date
+      g.dealer    || '',   // B - Dealer
+      g.client    || '',   // C - Client
+      g.mfg       || '',   // D - Fabricant
+      g.model     || '',   // E - Modèle
+      '',                  // F - Forklift_Count
+      g.voltage   || '',   // G - Voltage
+      g.shifts    || '',   // H - Shifts
+      8,                   // I - Shift_Duration
+      g.useType   || '',   // J - Use_Type
+      g.la        || '',   // K - Lead_Acid_Ah
+      uniqueBattAh,        // L - Battery_Ah
+      uniqueBattType,      // M - Battery_Type
+      uniqueCharAmps,      // N - Charger_Amps
+      uniqueCharMod,       // O - Charger_Model
+      g.comp      || '',   // P - Compartment
+      bestEff     || '',   // Q - Efficiency_%
+      g.work      || '',   // R - Work_Hours
+      chargeMins,          // S - Charge_Minutes
+      chargeConstraint,    // T - Charge_Constraint
+      'PIPELINE',          // U - Source
+      g.lang      || '',   // V - Language
+      'ENVOYÉE',           // W - Status
+      'TBD',               // X - Outcome
+      '',                  // Y - Sold_Combo
+      senderName,          // Z - Dealer_Contact
+      senderEmail,         // AA - Dealer_Email
+      g.thread    || '',   // AB - Gmail_Thread_ID
+      g.subject   || '',   // AC - Email_Subject
+      g.pdfId     || '',   // AD - Portée_PDF_ID
+      ''                   // AE - Notes
+    ];
+  });
+
+  // Append to SIM DB
+  if (newRows.length > 0) {
+    simDb.getRange(simDb.getLastRow() + 1, 1, newRows.length, 31).setValues(newRows);
+    Logger.log('repopulate: ' + newRows.length + ' rows written to SIM DB');
+  } else {
+    Logger.log('repopulate: no rows to write');
+  }
+}
