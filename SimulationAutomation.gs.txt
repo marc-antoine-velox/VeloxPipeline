@@ -2667,32 +2667,62 @@ function checkPendingSimulations() {
       const latestBody = humanMessages.length > 0
         ? humanMessages[humanMessages.length - 1].getPlainBody()
         : messages[messages.length - 1].getPlainBody();
-      // ── Extract text from PDF attachments ─────────────────────────────
+      // ── Extract text from PDF and Excel attachments ───────────────────
         let attachmentText = '';
         try {
           const allMessages = thread.getMessages();
           allMessages.forEach(function(msg) {
-            const attachments = msg.getAttachments();
-            attachments.forEach(function(att) {
+            if (msg.getFrom().toLowerCase().includes('veloxpower.com')) return;
+            msg.getAttachments().forEach(function(att) {
               const name = att.getName().toLowerCase();
-              if (name.endsWith('.pdf') && !msg.getFrom().toLowerCase().includes('veloxpower.com')) {
-                const blob = att.copyBlob();
-                blob.setContentType('application/pdf');
-               const file = Drive.Files.create(
-                  { name: 'tmp_ocr_' + att.getName(), mimeType: 'application/vnd.google-apps.document' },
-                  blob,
-                  { convert: true }
-                );
-                const doc  = DocumentApp.openById(file.id);
-                const text = doc.getBody().getText();
-                attachmentText += '\n\n[ATTACHMENT: ' + att.getName() + ']\n' + text;
-                Drive.Files.remove(file.id);
-                Logger.log('PDF extracted: ' + att.getName() + ' — ' + text.length + ' chars');
+
+              // PDF → OCR via Drive
+              if (name.endsWith('.pdf')) {
+                try {
+                  const blob = att.copyBlob();
+                  blob.setContentType('application/pdf');
+                  const file = Drive.Files.create(
+                    { name: 'tmp_ocr_' + att.getName(), mimeType: 'application/vnd.google-apps.document' },
+                    blob, { convert: true }
+                  );
+                  const text = DocumentApp.openById(file.id).getBody().getText();
+                  attachmentText += '\n\n[ATTACHMENT: ' + att.getName() + ']\n' + text;
+                  Drive.Files.remove(file.id);
+                  Logger.log('PDF extracted: ' + att.getName() + ' — ' + text.length + ' chars');
+                } catch(e) { Logger.log('PDF OCR error: ' + e.message); }
+              }
+
+              // Excel → convert to Google Sheet, read as text table
+              if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+                try {
+                  const blob = att.copyBlob();
+                  blob.setContentType('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+                  const file = Drive.Files.create(
+                    { name: 'tmp_excel_' + att.getName(), mimeType: 'application/vnd.google-apps.spreadsheet' },
+                    blob, { convert: true }
+                  );
+                  const ss = SpreadsheetApp.openById(file.id);
+                  const sheet = ss.getSheets()[0];
+                  const data = sheet.getDataRange().getValues();
+                  if (data.length > 0) {
+                    const headers = data[0].map(function(h) { return String(h || '').trim(); });
+                    let tableText = '\n\n[EXCEL ATTACHMENT: ' + att.getName() + ']\n';
+                    tableText += headers.join(' | ') + '\n';
+                    for (var r = 1; r < data.length; r++) {
+                      const row = data[r];
+                      if (row.every(function(c) { return !c; })) continue;
+                      tableText += row.map(function(c) { return String(c || '').trim(); }).join(' | ') + '\n';
+                    }
+                    attachmentText += tableText;
+                    Logger.log('Excel extracted: ' + att.getName() + ' — ' + (data.length - 1) + ' rows');
+                  }
+                  Drive.Files.remove(file.id);
+                } catch(e) { Logger.log('Excel extraction error: ' + e.message); }
               }
             });
           });
         } catch(e) {
-          Logger.log('PDF attachment extraction error: ' + e.message);
+          Logger.log('Attachment extraction error: ' + e.message);
         }
 
         const emailText = subject + '\n\n' + latestBody + attachmentText;
@@ -3158,34 +3188,62 @@ const threads = GmailApp.search(
         thread.addLabel(processedLabel);
         thread.markRead();
 
-        // ── Extract text from PDF attachments ─────────────────────────────
+        // ── Extract text from PDF and Excel attachments ───────────────────
         let attachmentText = '';
         try {
           const allMessages = thread.getMessages();
           allMessages.forEach(function(msg) {
-            const attachments = msg.getAttachments();
-            attachments.forEach(function(att) {
+            if (msg.getFrom().toLowerCase().includes('veloxpower.com')) return;
+            msg.getAttachments().forEach(function(att) {
               const name = att.getName().toLowerCase();
-              if (name.endsWith('.pdf') && !msg.getFrom().toLowerCase().includes('veloxpower.com')) {
-                // Convert PDF to Google Doc via Drive OCR to extract text
-                const blob     = att.copyBlob();
-                blob.setContentType('application/pdf');
-                const file     = Drive.Files.create(
-                  { name: 'tmp_ocr_' + att.getName(), mimeType: 'application/vnd.google-apps.document' },
-                  blob,
-                  { convert: true }
-                );
-                const doc      = DocumentApp.openById(file.id);
-                const text     = doc.getBody().getText();
-                attachmentText += '\n\n[ATTACHMENT: ' + att.getName() + ']\n' + text;
-                // Clean up temp file
-                Drive.Files.remove(file.id);
-                Logger.log('PDF extracted: ' + att.getName() + ' — ' + text.length + ' chars');
+
+              // PDF → OCR via Drive
+              if (name.endsWith('.pdf')) {
+                try {
+                  const blob = att.copyBlob();
+                  blob.setContentType('application/pdf');
+                  const file = Drive.Files.create(
+                    { name: 'tmp_ocr_' + att.getName(), mimeType: 'application/vnd.google-apps.document' },
+                    blob, { convert: true }
+                  );
+                  const text = DocumentApp.openById(file.id).getBody().getText();
+                  attachmentText += '\n\n[ATTACHMENT: ' + att.getName() + ']\n' + text;
+                  Drive.Files.remove(file.id);
+                  Logger.log('PDF extracted: ' + att.getName() + ' — ' + text.length + ' chars');
+                } catch(e) { Logger.log('PDF OCR error: ' + e.message); }
+              }
+
+              // Excel → convert to Google Sheet, read as text table
+              if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+                try {
+                  const blob = att.copyBlob();
+                  blob.setContentType('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+                  const file = Drive.Files.create(
+                    { name: 'tmp_excel_' + att.getName(), mimeType: 'application/vnd.google-apps.spreadsheet' },
+                    blob, { convert: true }
+                  );
+                  const ss = SpreadsheetApp.openById(file.id);
+                  const sheet = ss.getSheets()[0];
+                  const data = sheet.getDataRange().getValues();
+                  if (data.length > 0) {
+                    const headers = data[0].map(function(h) { return String(h || '').trim(); });
+                    let tableText = '\n\n[EXCEL ATTACHMENT: ' + att.getName() + ']\n';
+                    tableText += headers.join(' | ') + '\n';
+                    for (var r = 1; r < data.length; r++) {
+                      const row = data[r];
+                      if (row.every(function(c) { return !c; })) continue;
+                      tableText += row.map(function(c) { return String(c || '').trim(); }).join(' | ') + '\n';
+                    }
+                    attachmentText += tableText;
+                    Logger.log('Excel extracted: ' + att.getName() + ' — ' + (data.length - 1) + ' rows');
+                  }
+                  Drive.Files.remove(file.id);
+                } catch(e) { Logger.log('Excel extraction error: ' + e.message); }
               }
             });
           });
         } catch(e) {
-          Logger.log('PDF attachment extraction error: ' + e.message);
+          Logger.log('Attachment extraction error: ' + e.message);
         }
 
         const emailText = subject + '\n\n' + latestBody + attachmentText;
