@@ -511,9 +511,10 @@ const compartmentH = compParts.length >= 3 ? parseFloat(compParts[2].trim()) : n
   compartment_w: compartmentW, compartment_h: compartmentH,
   compartment_full: compStr, row: i + 1
 };
-      if (rowMfg === mfgClean && rowModel === modelClean) {
+      const mfgMatch = rowMfg === mfgClean || rowMfg.includes(mfgClean) || mfgClean.includes(rowMfg.split('/')[0].trim());
+      if (mfgMatch && rowModel === modelClean) {
         exactMatches.push(rowData);
-      } else if (rowMfg === mfgClean && rowModel.includes(modelClean)) {
+      } else if (mfgMatch && rowModel.includes(modelClean)) {
         fuzzyMatches.push(rowData);
       }
     }
@@ -2586,6 +2587,46 @@ ${chargingSection}
 
 Simulation generee automatiquement — veuillez reviser avant d'envoyer au dealer.`;
 
+  // ── Drive fallback if attachments exceed Gmail 25MB limit ─────────────────
+  function sendWithDriveFallback(body, attachments, subject) {
+    const driveBody = body + '\n\n[ PIÈCES JOINTES TROP VOLUMINEUSES ]\nLes PDFs ont été sauvegardés sur Drive:\n' +
+      attachments.map(function(a) {
+        try {
+          const folder = DriveApp.getFolderById('1j1ADg0s02dKVdcCoGOZQl9IbCWt7k7Ba');
+          const file = folder.createFile(a);
+          return '• ' + a.getName() + '\n  ' + file.getUrl();
+        } catch(e) { return '• ' + a.getName() + ' (erreur upload)'; }
+      }).join('\n');
+    GmailApp.sendEmail('marc-antoine@veloxpower.com', subject, driveBody);
+    Logger.log('Attachments too large — sent Drive links instead');
+  }
+
+  // ── Drive fallback helper — uploads PDFs to Drive and sends links ─────────
+  function sendWithDriveFallback(bodyText, subjectText) {
+    try {
+      const folder = DriveApp.getFolderById('1j1ADg0s02dKVdcCoGOZQl9IbCWt7k7Ba');
+      const subFolder = folder.createFolder('OVERFLOW_' + (params.dealer || 'Dealer') + '_' +
+        (params.forklift_model || 'Model') + '_' + new Date().toISOString().substring(0, 10));
+      const links = allPdfs.map(function(pdf) {
+        try {
+          const file = subFolder.createFile(pdf);
+          file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+          return '• ' + pdf.getName() + '\n  ' + file.getUrl();
+        } catch(e) { return '• ' + pdf.getName() + ' (erreur upload: ' + e.message + ')'; }
+      });
+      const driveBody = bodyText +
+        '\n\n════════════════════════════════════\n' +
+        '⚠ PIÈCES JOINTES TROP VOLUMINEUSES — LIENS DRIVE\n' +
+        'Les PDFs ont été sauvegardés ici:\n' + links.join('\n') +
+        '\n\nDossier Drive: ' + subFolder.getUrl();
+      GmailApp.sendEmail(recipient, subjectText, driveBody);
+      Logger.log('Attachments too large — uploaded to Drive and sent links');
+    } catch(uploadErr) {
+      Logger.log('Drive upload also failed: ' + uploadErr.message);
+      GmailApp.sendEmail(recipient, subjectText, bodyText + '\n\n[ERREUR: PDFs trop volumineux et upload Drive échoué]');
+    }
+  }
+
   try {
     const thread = params.thread || (params.gmail_thread_id ? GmailApp.getThreadById(params.gmail_thread_id) : null);
     if (thread) {
@@ -2599,40 +2640,84 @@ Simulation generee automatiquement — veuillez reviser avant d'envoyer au deale
         }
       }
       if (replyTarget) {
-        replyTarget.reply(body, { attachments: allPdfs });
-        Logger.log('Review reply sent in thread — ' + totalViable + ' viable, ' + totalNonViable + ' non-viable');
+        try {
+          replyTarget.reply(body, { attachments: allPdfs });
+          Logger.log('Review reply sent in thread — ' + totalViable + ' viable, ' + totalNonViable + ' non-viable');
+        } catch(e) {
+          if (e.message && e.message.includes('Limit Exceeded')) {
+            Logger.log('Attachment limit exceeded — falling back to Drive links');
+            sendWithDriveFallback(body, subject);
+          } else {
+            throw e;
+          }
+        }
       } else {
         try {
           const lastMessage = messages[messages.length - 1];
-const msgData = Gmail.Users.Messages.get('me', lastMessage.getId(), { format: 'metadata', metadataHeaders: ['Message-ID'] });
-const rfcHeader = msgData.payload.headers.find(function(h) { return h.name === 'Message-ID' || h.name === 'message-id'; });
-const rfcMessageId = rfcHeader ? rfcHeader.value : '<' + lastMessage.getId() + '@mail.gmail.com>';
-Logger.log('RFC Message-ID: ' + rfcMessageId);
-          GmailApp.sendEmail(
-            'marc-antoine@veloxpower.com',
-            subject,
-            body,
-            {
-              attachments: allPdfs,
-              headers: {
-                'In-Reply-To': rfcMessageId,
-                'References': rfcMessageId
+          const msgData = Gmail.Users.Messages.get('me', lastMessage.getId(), { format: 'metadata', metadataHeaders: ['Message-ID'] });
+          const rfcHeader = msgData.payload.headers.find(function(h) { return h.name === 'Message-ID' || h.name === 'message-id'; });
+          const rfcMessageId = rfcHeader ? rfcHeader.value : '<' + lastMessage.getId() + '@mail.gmail.com>';
+          Logger.log('RFC Message-ID: ' + rfcMessageId);
+          try {
+            GmailApp.sendEmail(
+              'marc-antoine@veloxpower.com',
+              subject,
+              body,
+              {
+                attachments: allPdfs,
+                headers: {
+                  'In-Reply-To': rfcMessageId,
+                  'References': rfcMessageId
+                }
+              }
+            );
+            Logger.log('Review email threaded via RFC headers — no marc-antoine message existed');
+          } catch(e) {
+            if (e.message && e.message.includes('Limit Exceeded')) {
+              Logger.log('Attachment limit exceeded — falling back to Drive links');
+              sendWithDriveFallback(body, subject);
+            } else {
+              Logger.log('RFC threading failed, falling back to standalone: ' + e.message);
+              try {
+                GmailApp.sendEmail(recipient, subject, body, { attachments: allPdfs });
+              } catch(e2) {
+                if (e2.message && e2.message.includes('Limit Exceeded')) {
+                  sendWithDriveFallback(body, subject);
+                } else { throw e2; }
               }
             }
-          );
-          Logger.log('Review email threaded via RFC headers — no marc-antoine message existed');
+          }
         } catch(e) {
           Logger.log('RFC threading failed, falling back to standalone: ' + e.message);
-          GmailApp.sendEmail(recipient, subject, body, { attachments: allPdfs });
+          try {
+            GmailApp.sendEmail(recipient, subject, body, { attachments: allPdfs });
+          } catch(e2) {
+            if (e2.message && e2.message.includes('Limit Exceeded')) {
+              sendWithDriveFallback(body, subject);
+            } else { throw e2; }
+          }
         }
       }
     } else {
-      GmailApp.sendEmail(recipient, subject, body, { attachments: allPdfs });
-      Logger.log('Review email sent (no thread) — ' + totalViable + ' viable, ' + totalNonViable + ' non-viable');
+      try {
+        GmailApp.sendEmail(recipient, subject, body, { attachments: allPdfs });
+        Logger.log('Review email sent (no thread) — ' + totalViable + ' viable, ' + totalNonViable + ' non-viable');
+      } catch(e) {
+        if (e.message && e.message.includes('Limit Exceeded')) {
+          Logger.log('Attachment limit exceeded — falling back to Drive links');
+          sendWithDriveFallback(body, subject);
+        } else { throw e; }
+      }
     }
   } catch(e) {
     Logger.log('Thread reply failed, falling back to email: ' + e.message);
-    GmailApp.sendEmail(recipient, subject, body, { attachments: allPdfs });
+    try {
+      GmailApp.sendEmail(recipient, subject, body, { attachments: allPdfs });
+    } catch(e2) {
+      if (e2.message && e2.message.includes('Limit Exceeded')) {
+        sendWithDriveFallback(body, subject);
+      } else { throw e2; }
+    }
   }
 }
 
