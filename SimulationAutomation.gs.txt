@@ -1942,7 +1942,12 @@ const standardEvents = buildChargingEvents(params.shifts, params.shift_duration,
 
       const workPass = meetsMinWorkThreshold(workAtMaxEff.totalMinutes, params.shifts, plan.battery_type, params.shift_duration);
       const ahPass   = results.status === 'PASS';
-      const passed   = ahPass && workPass;
+      const overLimit = (results.battery_used_pct || 0) > 220;
+        if (overLimit) {
+          Logger.log('  Battery usage ' + Math.round(results.battery_used_pct) + '% > 220% daily limit — combo excluded');
+          pipelineFlags.push('USAGE_JOURNALIER_DEPASSE — ' + Math.round(results.battery_used_pct) + '% > 220%');
+        }
+        const passed   = ahPass && workPass && !overLimit;
 
      Logger.log(plan.label + ' [' + scenarioLabel + '] | eff: ' + maxEff + '% | work: ' + workHours + ' | pass: ' + passed);
 
@@ -5042,4 +5047,64 @@ function repopulateSIMDBFromLogs() {
   } else {
     Logger.log('repopulate: no rows to write');
   }
+}
+
+function resendCamtranReviewEmail() {
+  const rootFolder = DriveApp.getFolderById('1j1ADg0s02dKVdcCoGOZQl9IbCWt7k7Ba');
+  const subFolders = rootFolder.getFoldersByName('Leavitt Machinery');
+
+  const pdfs = [];
+  if (subFolders.hasNext()) {
+    const dealerFolder = subFolders.next();
+    const files = dealerFolder.getFiles();
+    while (files.hasNext()) {
+      const f = files.next();
+      const name = f.getName();
+      if (name.startsWith('Scope_Leavitt Machinery_') && name.endsWith('.pdf')) {
+        pdfs.push(f);
+      }
+    }
+  }
+  pdfs.sort(function(a, b) { return a.getName() < b.getName() ? -1 : 1; });
+  Logger.log('Found ' + pdfs.length + ' PDFs');
+
+  const links = pdfs.map(function(f) {
+    return '• ' + f.getName() + '\n  ' + f.getUrl();
+  }).join('\n');
+
+  const ss = SpreadsheetApp.openById('1Nv6OZ1-3afIrsyZ4E0MtQ7oA4xZ7QDToMqFhhAFAdD4');
+  const logs = ss.getSheetByName('LOGS');
+  const data = logs.getDataRange().getValues();
+  const headers = data[0];
+  const modelCol = headers.indexOf('Modèle');
+  const ahCol = headers.indexOf('Ah');
+  const ampsCol = headers.indexOf('Ampères');
+  const effCol = headers.indexOf('Eff. max');
+  const workCol = headers.indexOf('Heures travail');
+  const passCol = headers.indexOf('Résultat global');
+  const gkCol = headers.indexOf('Grouping Key');
+
+  let simSummary = '';
+  for (var i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (String(row[gkCol] || '').includes('Camtran')) {
+      simSummary += '\n• ' + row[modelCol] + ' | ' + row[ahCol] + 'Ah + ' + row[ampsCol] + 'A' +
+        ' | Eff: ' + row[effCol] + '% | Travail: ' + row[workCol] +
+        ' | ' + (String(row[passCol]).includes('SUFFISANT') ? '✅ PASS' : '❌ FAIL');
+    }
+  }
+
+  const body = 'Bonjour Marc-Antoine,\n\n' +
+    'Résumé des simulations Camtran (Leavitt Machinery) — 7 chariots:\n' +
+    simSummary +
+    '\n\n════════════════════════════════════\n' +
+    '⚠ PDFs trop volumineux pour email — liens Drive:\n' +
+    links;
+
+  GmailApp.sendEmail(
+    'marc-antoine@veloxpower.com',
+    '[OK] Simulations à réviser — Camtran | Leavitt Machinery | 7 chariots',
+    body
+  );
+  Logger.log('Sent with ' + pdfs.length + ' Drive links');
 }
