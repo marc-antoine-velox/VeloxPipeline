@@ -2794,6 +2794,60 @@ if (params.dealer) {
   }
 }
 
+      // ── Multi-truck routing ───────────────────────────────────────────
+      if (params.trucks && params.trucks.length > 1) {
+        Logger.log('Multi-truck detected: ' + params.trucks.length + ' trucks');
+        const sharedParams = {
+          dealer:          params.dealer || '',
+          customer:        params.customer || '',
+          sender_name:     params.sender_name || '',
+          sender_email:    params.sender_email || '',
+          sender:          [params.sender_name || '', params.sender_email || ''].filter(Boolean).join(' '),
+          shifts:          params.shifts || 1,
+          shift_duration:  params.shift_duration || 8,
+          use_type:        params.use_type || 'average',
+          heating_option:  params.heating_option || false,
+          ip54_charger:    params.ip54_charger || false,
+          shift_start_hour: params.shift_start_hour || 7,
+          stated_charge_minutes_per_shift: params.stated_charge_minutes_per_shift || 0,
+          custom_charge_times: params.custom_charge_times || [],
+          language:        params.language || 'fr',
+          email_subject:   subject,
+          gmail_thread_id: thread.getId(),
+          target_efficiency: params.target_efficiency || 100
+        };
+
+        params.trucks.forEach(function(truck) {
+          const truckParams = Object.assign({}, sharedParams, {
+            forklift_manufacturer: truck.forklift_manufacturer || '',
+            forklift_model:        truck.forklift_model || '',
+            voltage:               truck.voltage || 0,
+            compartment:           truck.compartment || '',
+            battery_ah:            truck.battery_ah || 0,
+            charger_amps:          truck.charger_amps || 0
+          });
+          queueTruckSimulation(truckParams, sharedParams, thread.getId());
+        });
+
+        const truckList = params.trucks.map(function(t) {
+          return '- ' + (t.forklift_manufacturer || '?') + ' ' + (t.forklift_model || '?') +
+                 (t.voltage ? ' ' + t.voltage + 'V' : '') +
+                 (t.compartment ? ' — ' + t.compartment : '');
+        }).join('\n');
+
+        GmailApp.sendEmail(
+          'marc-antoine@veloxpower.com',
+          '[MULTI-CHARIOT] ' + params.trucks.length + ' chariots en queue — ' + (params.customer || params.dealer),
+          'Bonjour Marc-Antoine,\n\n' + params.trucks.length + ' chariots détectés dans cet email.\n\nChariots en queue:\n' + truckList +
+          '\n\nLes simulations seront traitées une par une automatiquement.' +
+          '\n\nSujet original: ' + subject
+        );
+
+        Logger.log('Multi-truck queued: ' + params.trucks.length + ' trucks | notification sent');
+        return;
+      }
+      // ── End multi-truck routing ───────────────────────────────────────
+
       const hasModel  = params.forklift_manufacturer && params.forklift_model &&
                   String(params.forklift_manufacturer).length > 0 &&
                   String(params.forklift_model).length > 0;
