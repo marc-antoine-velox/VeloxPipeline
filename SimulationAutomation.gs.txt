@@ -942,10 +942,7 @@ function selectSimulations(dekaResult, eboxResult, params) {
   if (bat450) {
     const flexStartAmps = voltage === 80 ? 215 : 250;
     const flexCapAmps   = voltage === 80 ? 215 : 275;
-    const kva18Amps     = voltage === 36 ? 360 : voltage === 48 ? 275 : voltage === 24 ? 400 : 0;
-    const kva18Charger  = kva18Amps > 0 ? findCharger(kva18Amps) : null;
-    const ch1 = kva18Charger ||
-                findCharger(flexStartAmps) ||
+    const ch1 = findCharger(flexStartAmps) ||
                 chargers.find(function(c) { return c.amps >= flexStartAmps && c.amps <= flexCapAmps; }) ||
                 chargers[0];
     if (ch1) {
@@ -1948,7 +1945,12 @@ const standardEvents = buildChargingEvents(params.shifts, params.shift_duration,
 
       // ── Bonus 100% verification pass ────────────────────────────────────
       if (passed && maxEff < 100) {
-        const nextChargers = (selection.chargers || []).filter(function(c) { return c.amps > plan.charger_amps; });
+        const isFlexPlan = !String(plan.battery_type || '').toUpperCase().includes('PLUS') &&
+                           !String(plan.battery_type || '').toUpperCase().includes('MAX');
+        const maxBonusAmps = isFlexPlan ? 275 : Math.floor(plan.battery_ah * 0.80);
+        const nextChargers = (selection.chargers || []).filter(function(c) {
+          return c.amps > plan.charger_amps && c.amps <= maxBonusAmps;
+        });
         let bonus100Found = false;
         for (let nc = 0; nc < nextChargers.length && !bonus100Found; nc++) {
           const bonusCharger = nextChargers[nc];
