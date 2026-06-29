@@ -32,7 +32,8 @@ function buildHTMLPortee(params, allSimResults, allSimScreenshots) {
     const lang      = (params.language || 'fr').toUpperCase();
     const isEN      = lang === 'EN';
     const shiftLabel = (params.shifts || 2) + 'x' + (params.shift_duration || 8) + 'h';
-    const title     = (isEN ? 'Scope_' : 'Portée_') + dealer + '_' + model + '_' + voltage + 'V_' + shiftLabel;
+    const customer  = (params.customer || '').replace(/[^a-zA-Z0-9À-ÿ _-]/g, '').trim();
+    const title     = (isEN ? 'Scope_' : 'Portée_') + dealer + (customer ? '_' + customer : '') + '_' + model + '_' + voltage + 'V_' + shiftLabel;
 
     // Load assets as base64
     const veloxLogoB64   = _htmlLoadAssetB64('VELOX_LOGO.png');
@@ -1127,8 +1128,9 @@ function _htmlBuildSimEntries(allSimResults, allSimScreenshots, params) {
     const chargeMin   = minMatch ? parseInt(minMatch[1]) : 60;
     let batteryModel  = 'Flex';
     const bt = (sim.battery_type || '').toUpperCase();
-    if (bt.includes('MAX'))       batteryModel = 'Max';
-    else if (bt.includes('PLUS')) batteryModel = 'Plus';
+    if (bt.includes('MAX'))        batteryModel = 'Max';
+    else if (bt.includes('PLUS'))  batteryModel = 'Plus';
+    else if (bt.includes('CUSTOM')) batteryModel = 'Custom';
 
     // Derive shift start from Pre-Shift Charge end time — most reliable source
     // Falls back to params.shift_start_hour, then 7 as last resort
