@@ -2675,8 +2675,10 @@ function checkPendingSimulations() {
         try {
           const allMessages = thread.getMessages();
           allMessages.forEach(function(msg) {
-            if (msg.getFrom().toLowerCase().includes('veloxpower.com')) return;
+            const isInternal = msg.getFrom().toLowerCase().includes('veloxpower.com');
             msg.getAttachments().forEach(function(att) {
+              // For internal senders, only process file attachments (Excel/PDF) — not images
+              if (isInternal && !att.getName().toLowerCase().match(/\.(pdf|xlsx|xls)$/)) return;
               const name = att.getName().toLowerCase();
 
               // PDF → OCR via Drive
@@ -3196,8 +3198,10 @@ const threads = GmailApp.search(
         try {
           const allMessages = thread.getMessages();
           allMessages.forEach(function(msg) {
-            if (msg.getFrom().toLowerCase().includes('veloxpower.com')) return;
+            const isInternal = msg.getFrom().toLowerCase().includes('veloxpower.com');
             msg.getAttachments().forEach(function(att) {
+              // For internal senders, only process file attachments (Excel/PDF) — not images
+              if (isInternal && !att.getName().toLowerCase().match(/\.(pdf|xlsx|xls)$/)) return;
               const name = att.getName().toLowerCase();
 
               // PDF → OCR via Drive
