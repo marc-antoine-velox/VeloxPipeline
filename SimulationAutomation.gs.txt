@@ -77,7 +77,10 @@ function normalizeDealer(extractedDealer, knownDealers) {
     'HANSLER LEAVITT':      'Leavitt Machinery',
     'ELEX':                 'Elevex',
     'TOROMONT MANUTENTION': 'Toromont',
-    'TOROMONT CAT':         'Toromont'
+    'TOROMONT CAT':         'Toromont',
+    'E.M.U':                'Techlift',
+    'EMU':                  'Techlift',
+    'E M U':                'Techlift'
   };
   if (ALIASES[input]) {
     Logger.log('Dealer alias applied: "' + extractedDealer + '" → "' + ALIASES[input] + '"');
