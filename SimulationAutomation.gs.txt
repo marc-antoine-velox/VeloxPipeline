@@ -240,9 +240,10 @@ Rules:
 - shift_duration is 8 by default. Set to 12 if: the email mentions "12 hour shift", "12h shift", "quart de 12 heures", "2x12", OR if the truck's working day spans 12 hours based on stated start and end times (e.g. starts at 6am and ends at 6pm = 12h). Calculate from the first start time to the last end time of the working day when specific times are given. - If the email states total daily hours across multiple shifts (e.g. "running 8-14 hours a day on 2 shifts"), divide total hours by shift count and round up to nearest standard interval (8 or 12) to get shift_duration.
 - If daily work hours are stated as 4 or fewer (e.g. "about 3 hours a day", "roughly 4 hours"), default shifts to 1 unless explicitly stated otherwise.
 - CRITICAL: If the email or attached Excel mentions annual hours (e.g. "1500 annual hours", "1800 hours per year", "2000h/year"), you MUST apply this rule immediately: 1800h/year or below → shifts: 1, shift_duration: 8. Above 1800h/year → shifts: 0. Never put annual hours only in notes — always infer shifts from it.
+- CRITICAL: If the email mentions "opportunité légère" or "light opportunity charging" (or equivalent phrasing) AND does not explicitly state a shift count, default to shifts: 2, shift_duration: 8. Reasoning: opportunity charging relies on the truck stopping periodically (breaks, lunch) to top up — lead-acid cannot sustain this pattern across 3 shifts, so "légère"/"light" opportunity language never implies 3 shifts. This rule does NOT apply if the email explicitly states a different shift count — explicit statements always override this default.
 - shift_duration is ALWAYS 8 or 12 — never set it to the number of daily work hours. If the truck works 3 hours a day, shift_duration is still 8 and shifts is 1. Daily work hours affect target_efficiency only, not shift_duration.
 - If the email states daily work hours that are less than 8 (e.g. "about 3 hours a day", "3 to 4 hours", "roughly 3 hours"), this ALWAYS means: shifts: 1, shift_duration: 8, and target_efficiency: round((stated_hours / 8) * 100). Never return shifts: 0 in this case. Example: "about 3 hours a day" → shifts: 1, shift_duration: 8, target_efficiency: 38. "3 or 4 hours" → shifts: 1, shift_duration: 8, target_efficiency: 50.
-- voltage: ALWAYS check the email subject line AND body for voltage. Look for patterns like "80v", "80V", "48v", "48V" anywhere in the text including the subject. The voltage often appears next to the model name like "Linde E30 80v". Never return 0 if a voltage number followed by V appears anywhere in the subject or body.
+- voltage: ALWAYS check the email subject line AND body for voltage. Look for patterns like "80v", "80V", "48v", "48V" anywhere in the text including the subject. The voltage often appears next to the model name like "Linde E30 80v". Never return 0 if a voltage number followed by "V" or "v" appears anywhere in the subject or body. CRITICAL: If no number is directly followed by "V" or "v" anywhere in the email, you MUST return voltage: 0. Never guess, infer, or assume a voltage based on the forklift model alone — a model number like "346-01" is NOT a voltage and must never be used as one.
 - voltage is typically 24, 36, 48, 72, or 80
 - Extract dealer name and customer name separately when both are mentioned
 - heating_option is true ONLY if the truck charges in a cold environment (≤ -25°C at all times) OR if the charger is permanently installed in a freezer or outdoor uncontrolled environment. If the truck works in a freezer but charges in a controlled indoor area (e.g. dock, dry room, warehouse at normal or cool temperature), heating_option is false — this is a standard application. The operating freezer temperature alone does NOT trigger heating_option.
@@ -480,6 +481,14 @@ function lookupDekaPull(manufacturer, model, voltage, params, preloadedData) {
     const ahCol          = headers.indexOf('AhCapacity');
     const plateRatingCol = headers.indexOf('PlateRatingAh');
     Logger.log('Column indexes — Mfg:' + mfgCol + ' Model:' + modelCol + ' Volt:' + voltCol + ' Comp:' + compartmentCol + ' Ah:' + ahCol);
+    // CRITICAL: Linde E20 default — if voltage not specified, always use 48V and first compartment
+    if (manufacturer.toUpperCase().trim() === 'LINDE' &&
+        model.toUpperCase().trim().replace(/[^A-Z0-9]/g, '') === 'E20' &&
+        (!voltage || voltage === 0)) {
+      voltage = 48;
+      Logger.log('Linde E20 — no voltage specified, defaulting to 48V per business rule');
+    }
+
     const mfgClean   = manufacturer.toUpperCase().trim();
     const modelClean = model.toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
     let exactMatches = [];
