@@ -821,10 +821,7 @@ function selectSimulations(dekaResult, eboxResult, params) {
     if (flex450) {
       const flexStartAmps = voltage === 80 ? 215 : 250;
       const flexCapAmps   = voltage === 80 ? 215 : 275;
-      const kva18Amps     = voltage === 36 ? 360 : voltage === 48 ? 275 : voltage === 24 ? 400 : 0;
-      const kva18Charger  = kva18Amps > 0 ? findCharger(kva18Amps) : null;
-      const flexCh = kva18Charger ||
-                     findCharger(flexStartAmps) ||
+      const flexCh = findCharger(flexStartAmps) ||
                      chargers.find(function(c) { return c.amps >= flexStartAmps && c.amps <= flexCapAmps; }) ||
                      chargers[0];
       if (flexCh) {
@@ -835,8 +832,7 @@ function selectSimulations(dekaResult, eboxResult, params) {
           label: 'Sim ' + simIdx + ' — ' + flex450.ah + 'Ah + ' + flexCh.amps + 'A (VeloxFlex)',
           battery_type: flex450.type || 'VeloxFlex', ebox: flex450.ebox || '',
           conditional: false, simIndex: simIdx,
-          check18KVAThreshold: false  // charger already selected optimally above
-          // TODO: add 320A threshold logic here when rule is defined
+          check18KVAThreshold: true  // 275A still offered as second sim if 6% threshold met
         });
         simIdx++;
       }
@@ -3917,20 +3913,116 @@ if (forwardedByQuote) {
     Logger.log('No external message found — falling back to last message');
   }
 
-  // ── Build HTML body ───────────────────────────────────────────────────────
+  // ── Build HTML body with manually-constructed quoted history ──────────────
   var htmlBody = body.replace(/\n/g, '<br>').replace(/•/g, '&bull;') + '<br><br>' + signature;
 
-  // ── Create draft reply (native quoted history + correct CC) ──────────────
-  var initialDraft = replyTargetMsg.createDraftReplyAll('', {
+  // Construct Gmail-style quoted history block from the reply target message
+  var inlineImagesMap = {};
+  try {
+    var origDate    = replyTargetMsg.getDate();
+    var origFrom    = replyTargetMsg.getFrom(); // "Name <email>" format
+    var origBodyHtml = replyTargetMsg.getBody() || ''; // already HTML
+    var dateStr     = Utilities.formatDate(origDate, Session.getScriptTimeZone(),
+                       isEN ? 'EEE, MMM d, yyyy \'at\' h:mm a' : 'EEE d MMM yyyy \'à\' HH:mm');
+    var quoteHeader = isEN
+      ? 'On ' + dateStr + ', ' + origFrom + ' wrote:'
+      : 'Le ' + dateStr + ', ' + origFrom + ' a écrit :';
+
+    htmlBody += '<br><br><div class="gmail_quote">' +
+                '<div dir="ltr" class="gmail_attr">' + quoteHeader + '<br></div>' +
+                '<blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px #ccc solid;padding-left:1ex">' +
+                origBodyHtml +
+                '</blockquote></div>';
+
+    // ── Extract inline images from the original message via advanced Gmail API ──
+    try {
+      var origMsgId = replyTargetMsg.getId();
+      var fullMsg = Gmail.Users.Messages.get('me', origMsgId, { format: 'full' });
+
+      // Recursive walk through MIME parts to find inline images
+      function walkParts(parts) {
+        if (!parts) return;
+        parts.forEach(function(part) {
+          if (part.parts && part.parts.length > 0) {
+            walkParts(part.parts);
+          }
+          var mimeType = part.mimeType || '';
+          if (mimeType.indexOf('image/') !== 0) return;
+
+          // Look for Content-ID header
+          var headers = part.headers || [];
+          var cidHeader = null;
+          var dispHeader = null;
+          headers.forEach(function(h) {
+            var hName = (h.name || '').toLowerCase();
+            if (hName === 'content-id') cidHeader = h.value;
+            if (hName === 'content-disposition') dispHeader = h.value;
+          });
+
+          if (!cidHeader) return;
+
+          // Strip angle brackets from Content-ID (e.g. <ii_xxx@gmail.com> → ii_xxx@gmail.com)
+          var cid = cidHeader.replace(/^<|>$/g, '').trim();
+          if (!cid) return;
+
+          // Download attachment data
+          if (!part.body || !part.body.attachmentId) return;
+          try {
+            var attData = Gmail.Users.Messages.Attachments.get('me', origMsgId, part.body.attachmentId);
+            Logger.log('Attachment ' + cid + ' — data type: ' + typeof attData.data +
+                       ' | length: ' + (attData.data && attData.data.length) +
+                       ' | first 40 chars: ' + (typeof attData.data === 'string' ? attData.data.substring(0, 40) : 'N/A'));
+
+            var bytes;
+            if (typeof attData.data === 'string') {
+              // Try base64DecodeWebSafe first, fall back to base64Decode
+              try {
+                bytes = Utilities.base64DecodeWebSafe(attData.data);
+              } catch(e1) {
+                Logger.log('  base64DecodeWebSafe failed, trying base64Decode: ' + e1.message);
+                bytes = Utilities.base64Decode(attData.data);
+              }
+            } else {
+              // Already binary
+              bytes = attData.data;
+            }
+
+            var blob = Utilities.newBlob(bytes, mimeType, cid);
+            inlineImagesMap[cid] = blob;
+            Logger.log('  ✓ Inline image attached: ' + cid);
+          } catch(attErr) {
+            Logger.log('Could not download inline image ' + cid + ': ' + attErr.message);
+          }
+        });
+      }
+
+      if (fullMsg.payload) walkParts([fullMsg.payload]);
+      Logger.log('Inline images extracted: ' + Object.keys(inlineImagesMap).length);
+    } catch(imgErr) {
+      Logger.log('Could not extract inline images: ' + imgErr.message);
+    }
+  } catch(e) {
+    Logger.log('Could not build quoted history: ' + e.message);
+  }
+
+  // ── Create draft reply (use createDraftReply, NOT replyAll — avoids CC auto-injection) ──
+  var draftOptions = {
     htmlBody: htmlBody,
     attachments: allAttachments,
+    to: toList,
     cc: ccList
-  });
+  };
+  if (Object.keys(inlineImagesMap).length > 0) {
+    draftOptions.inlineImages = inlineImagesMap;
+  }
+  var initialDraft = replyTargetMsg.createDraftReply('', draftOptions);
   var draftId = initialDraft.getId();
   Logger.log('Draft created: ' + draftId);
 
   // ── Patch CC: remove marc-antoine from the draft via raw MIME surgery ─────
-  try {
+  // TEMP: disabled to test whether MIME surgery is causing thread/history corruption
+  var ENABLE_MIME_PATCH = false;
+  if (ENABLE_MIME_PATCH) try {
     var marcClean = 'marc-antoine@veloxpower.com';
 
     // Fetch raw MIME of the draft (returns byte array)
