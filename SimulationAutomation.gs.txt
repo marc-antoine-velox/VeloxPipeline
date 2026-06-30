@@ -3812,9 +3812,26 @@ if (forwardedByQuote) {
   toList = 'carolane@veloxpower.com';
   ccList = 'quote@veloxpower.com';
 } else {
-  // Dealer contacted directly — reply to dealer, CC quote
-  toList = externalAddresses.join(', ');
-  ccList = 'quote@veloxpower.com';
+  // Dealer contacted directly — find the most recent external sender for To,
+  // put all other external addresses in CC alongside quote@
+  var primarySender = '';
+  for (var pi = messages.length - 1; pi >= 0; pi--) {
+    var pFrom = messages[pi].getFrom();
+    var pClean = pFrom.toLowerCase().replace(/.*<(.+)>/, '$1').trim();
+    if (!pClean.includes('veloxpower.com')) {
+      primarySender = pFrom;
+      break;
+    }
+  }
+  // Build CC from all external addresses EXCEPT the primary sender
+  var primaryClean = primarySender.toLowerCase().replace(/.*<(.+)>/, '$1').trim();
+  var ccAddresses = externalAddresses.filter(function(addr) {
+    var addrClean = addr.toLowerCase().replace(/.*<(.+)>/, '$1').trim();
+    return addrClean !== primaryClean;
+  });
+  ccAddresses.push('quote@veloxpower.com');
+  toList = primarySender || externalAddresses.join(', '); // fallback if no primary found
+  ccList = ccAddresses.join(', ');
 }
 
   // ── Confirm and send ──────────────────────────────────────────────────────
