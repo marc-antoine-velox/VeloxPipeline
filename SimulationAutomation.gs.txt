@@ -559,6 +559,16 @@ if (voltage && voltage > 0 && fuzzyMatches.length > 0) {
       total_exact: filteredExact.length, total_fuzzy: fuzzyMatches.length,
       all_voltages: [...new Set(exactMatches.map(m => m.voltage))], status: ''
     };
+    // CRITICAL: Linde E20 — if multiple 48V matches and no compartment given, always take first (lowest row)
+    const isLindeE20 = manufacturer.toUpperCase().trim() === 'LINDE' &&
+                        model.toUpperCase().trim().replace(/[^A-Z0-9]/g, '') === 'E20';
+    const noCompartmentGiven = !(params && params.compartment && String(params.compartment).trim().length > 0);
+    if (isLindeE20 && voltage === 48 && noCompartmentGiven && filteredExact.length > 1) {
+      filteredExact.sort(function(a, b) { return a.row - b.row; });
+      Logger.log('Linde E20 — multiple 48V matches, no compartment given, defaulting to first: ' + JSON.stringify(filteredExact[0]));
+      filteredExact = [filteredExact[0]];
+    }
+
     if (filteredExact.length === 1) {
       result.status = 'EXACT_SINGLE';
     } else if (filteredExact.length > 1) {
