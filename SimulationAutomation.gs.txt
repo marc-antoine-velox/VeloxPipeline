@@ -3274,10 +3274,12 @@ function checkForNewSimulations() {
 
   const manufacturers = getManufacturersFromDeka();
   const knownDealers  = getKnownDealers();
-const threads = GmailApp.search(
+const allUnread = GmailApp.search(
     'to:marc-antoine@veloxpower.com is:unread -label:VELOX-PROCESSED -in:sent',
-    0, 1
+    0, 20
   );
+// Process oldest first — Gmail returns newest-first, so take the last item
+const threads = allUnread.length > 0 ? [allUnread[allUnread.length - 1]] : [];
 
   Logger.log('Unread threads to evaluate: ' + threads.length);
 
