@@ -366,11 +366,16 @@ function _htmlSimSlide(entry, params, simNum, isEN) {
   const h2 = Math.floor(totalHps), m2 = Math.round((totalHps - h2) * 60);
   const totalWork = h2 + 'h' + (m2 < 10 ? '0' : '') + m2;
 
-  // Metric pills
+  // Metric pills — dual battery shows 'Dual [X]Ah' instead of standard label
+  const isDualVelox    = entry.dual_battery && entry.velox_battery_count > 1;
+  const perBatteryAh   = isDualVelox ? Math.round(entry.batteryAh / entry.velox_battery_count) : entry.batteryAh;
+  const batteryPillLbl = isDualVelox ? ('Dual ' + perBatteryAh + 'Ah') : ('Velox' + entry.batteryModel);
+  const batteryPillVal = isDualVelox ? ('Dual ' + perBatteryAh + 'Ah') : (entry.batteryAh + ' Ah');
+
   const pills = [
     { val: totalWork,                        lbl: isEN ? 'total / day'  : 'total / jour' },
     { val: perShift,                         lbl: isEN ? '/ shift'      : '/ quart' },
-    { val: entry.batteryAh + ' Ah',          lbl: 'Velox' + entry.batteryModel },
+    { val: batteryPillVal,                   lbl: batteryPillLbl },
     { val: entry.chargerAmps + ' A',         lbl: 'Omni' },
     { val: (entry.efficiency || 0) + '%',    lbl: isEN ? 'efficiency'   : 'efficacité' },
     { val: (entry.truckLoad || 0) + ' A/hm', lbl: isEN ? 'consumption' : 'consommation' }
@@ -385,10 +390,14 @@ function _htmlSimSlide(entry, params, simNum, isEN) {
       '</div>';
   }).join('');
 
-  // Config rows
+  // Config rows — dual battery shows '2× VeloxFlex 450Ah' when both slots used
+  const batteryConfigLabel = isDualVelox
+    ? (entry.velox_battery_count + '× Velox' + entry.batteryModel + ' ' + perBatteryAh + 'Ah')
+    : ('Velox' + entry.batteryModel + ' ' + entry.batteryAh + 'Ah');
+
   const dur = entry.shift_duration || 8;
   const cfgRows = [
-    [isEN ? 'Battery'         : 'Batterie',       'Velox' + entry.batteryModel + ' ' + entry.batteryAh + 'Ah'],
+    [isEN ? 'Battery'         : 'Batterie',       batteryConfigLabel],
     [isEN ? 'Charger'         : 'Chargeur',        entry.chargerAmps + 'A'],
     ['Voltage',                                    (entry.voltage || params.voltage || '') + 'V'],
     [isEN ? 'Consumption'     : 'Consommation',    (entry.truckLoad || '') + ' A/hm'],
@@ -427,7 +436,8 @@ function _htmlSimSlide(entry, params, simNum, isEN) {
     : '<div style="color:#8899aa;font-size:11px;font-weight:700;text-align:center;padding-top:40%;">SOC chart unavailable</div>';
 
   const leftLabel  = isEN ? 'Work Simulation' : 'Simulation de Travail';
-  const rightLabel = (isEN ? 'Simulation ' : 'Simulation ') + simNum;
+  const rightLabel = (isEN ? 'Simulation ' : 'Simulation ') + simNum +
+    (isDualVelox ? (isEN ? ' · Dual Battery' : ' · Double Batterie') : '');
   const simBgStyle = 'background:radial-gradient(ellipse at 30% 40%, #7a8ba0 0%, #5a6a80 30%, #4a5a70 55%, #3a4a5e 80%, #2e3a50 100%);';
 
   return '<div class="slide" style="' + simBgStyle + '">' +
@@ -497,7 +507,13 @@ function _htmlConclusionSlide(entry, params, simNum, isEN) {
   const brandModel = (mfr ? mfr + ' ' : '') + model;
   const volt  = entry.voltage || params.voltage || '';
 
-  const spec = (isEN ? 'Battery ' : 'Batterie ') + 'Velox' + entry.batteryModel + ' ' + entry.batteryAh + 'Ah' +
+  const isDualVeloxConc  = entry.dual_battery && entry.velox_battery_count > 1;
+  const perBatteryAhConc = isDualVeloxConc ? Math.round(entry.batteryAh / entry.velox_battery_count) : entry.batteryAh;
+  const batterySpecLabel = isDualVeloxConc
+    ? (entry.velox_battery_count + '× Velox' + entry.batteryModel + ' ' + perBatteryAhConc + 'Ah')
+    : ('Velox' + entry.batteryModel + ' ' + entry.batteryAh + 'Ah');
+
+  const spec = (isEN ? 'Battery ' : 'Batterie ') + batterySpecLabel +
                '  ·  ' + (isEN ? 'Charger ' : 'Chargeur ') + 'Omni ' + entry.chargerAmps + 'A  ·  ' + volt + 'V';
 
   // Conclusion text (short, clean)
@@ -558,7 +574,8 @@ function _htmlConclusionSlide(entry, params, simNum, isEN) {
   const timelineSvg = _htmlTimelineSVG(entry, isEN);
 
   const leftLabel  = 'Conclusion';
-  const rightLabel = (isEN ? 'Simulation ' : 'Simulation ') + simNum;
+  const rightLabel = (isEN ? 'Simulation ' : 'Simulation ') + simNum +
+    (isDualVeloxConc ? (isEN ? ' · Dual Battery' : ' · Double Batterie') : '');
   const concBgStyle = 'background:radial-gradient(ellipse at 30% 40%, #7a8ba0 0%, #5a6a80 30%, #4a5a70 55%, #3a4a5e 80%, #2e3a50 100%);';
 
   return '<div class="slide" style="' + concBgStyle + '">' +
@@ -1177,7 +1194,10 @@ let shiftStart = 7;
       chargingEvents:     sim.chargingEvents || [],
       shift_start_hour:   shiftStart,
       shift_duration:     params.shift_duration || 8,
-      total_ah_raw:       Math.round((sim.results && sim.results.total_ah) || 0)
+      total_ah_raw:       Math.round((sim.results && sim.results.total_ah) || 0),
+      dual_battery:       sim.dual_battery || false,
+      velox_battery_count: sim.velox_battery_count || 1,
+      single_slot_ah:     sim.single_slot_ah || 0
     };
   });
 }

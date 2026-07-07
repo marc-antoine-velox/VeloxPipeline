@@ -484,7 +484,8 @@ function lookupDekaPull(manufacturer, model, voltage, params, preloadedData) {
     const voltCol        = headers.indexOf('Voltage');
     const compartmentCol = headers.indexOf('Compartment');
     const ahCol          = headers.indexOf('AhCapacity');
-    const plateRatingCol = headers.indexOf('PlateRatingAh');
+    const plateRatingCol  = headers.indexOf('PlateRatingAh');
+    const batteryCountCol = headers.indexOf('BatteryCount');
     Logger.log('Column indexes — Mfg:' + mfgCol + ' Model:' + modelCol + ' Volt:' + voltCol + ' Comp:' + compartmentCol + ' Ah:' + ahCol);
     // CRITICAL: Linde E20 default — if voltage not specified, always use 48V and first compartment
     if (manufacturer.toUpperCase().trim() === 'LINDE' &&
@@ -523,7 +524,9 @@ const compartmentH = compParts.length >= 3 ? parseFloat(compParts[2].trim()) : n
   manufacturer: data[i][mfgCol], model: data[i][modelCol],
   voltage: data[i][voltCol], ah: ah,
   compartment_w: compartmentW, compartment_h: compartmentH,
-  compartment_full: compStr, row: i + 1
+  compartment_full: compStr, row: i + 1,
+  battery_count: batteryCountCol >= 0 ? (Number(data[i][batteryCountCol]) || 1) : 1,
+  dual_battery:  batteryCountCol >= 0 ? (Number(data[i][batteryCountCol]) || 1) > 1 : false
 };
       const mfgMatch = rowMfg === mfgClean || rowMfg.includes(mfgClean) || mfgClean.includes(rowMfg.split('/')[0].trim());
       if (mfgMatch && rowModel === modelClean) {
@@ -1628,6 +1631,19 @@ const bestMatch    = dekaResult.exact_matches[0] || dekaResult.fuzzy_matches[0];
 const compartmentW = bestMatch.compartment_w;
 const leadAcidAh   = bestMatch.ah;
 
+// ── Dual-battery detection — auto-set from Deka Pull BatteryCount column ──────
+if (bestMatch.dual_battery) {
+  params.dual_battery    = true;
+  params.battery_count   = bestMatch.battery_count || 2;
+  if (!params.lead_acid_ah || params.lead_acid_ah === 0) {
+    params.lead_acid_ah = bestMatch.ah * (bestMatch.battery_count || 2);
+    Logger.log('Dual-battery detected — combined lead_acid_ah set to ' + params.lead_acid_ah + 'Ah (' + (bestMatch.battery_count || 2) + '× ' + bestMatch.ah + 'Ah)');
+    pipelineFlags.push('DUAL_BATTERY — ' + (bestMatch.battery_count || 2) + '× ' + bestMatch.ah + 'Ah — lead_acid_ah auto-set to ' + params.lead_acid_ah + 'Ah');
+  } else {
+    Logger.log('Dual-battery detected — lead_acid_ah already set to ' + params.lead_acid_ah + 'Ah (manual override kept)');
+  }
+}
+
 if (!params.voltage || params.voltage === 0) {
   params.voltage = bestMatch.voltage;
   pipelineFlags.push('VOLTAGE_ASSUME_DEPUIS_DEKA');
@@ -2086,28 +2102,38 @@ allSimScreenshots.push(readAllSOC());
         language:              params.language || 'fr',
         scenario:              scenarioLabel,
         overall_passed:        passed,
+        dual_battery:          params.dual_battery || false,
+        truck_battery_count:   params.battery_count || 1,
         flags:                 pipelineFlags.concat(workPass ? [] : ['HEURES_TRAVAIL_INSUFFISANTES'])
       };
       logSimulationResult(logParams, results, simNumber);
 
+      // Determine if this Velox recommendation uses dual batteries
+      const singleSlotAh = bestMatch.ah;
+      const veloxBatteryCount = (params.dual_battery && plan.battery_ah > singleSlotAh)
+        ? (params.battery_count || 2) : 1;
+
       const simRecord = {
-  simNumber:      simNumber,
-  screenshotIndex: allSimScreenshots.length - 1,
-  label:          plan.label,
-  battery_ah:     plan.battery_ah,
-  charger_amps:   plan.charger_amps,
-  charger_model:  plan.charger_model || '',
-  battery_type:   plan.battery_type || '',
-  max_efficiency: maxEff,
-  work_hours:     workHours,
-  truck_load:     plan.truck_load,
-  compartment_w:  plan.compartment_w || compartmentW,
-  ebox:           plan.ebox || '',
-  per_shift:      workAtMaxEff.perShift,
-  results:        results,
-  passed:         passed,
-  scenario:       scenarioLabel,
-  chargingEvents: chargingEvents 
+  simNumber:           simNumber,
+  screenshotIndex:     allSimScreenshots.length - 1,
+  label:               plan.label,
+  battery_ah:          plan.battery_ah,
+  charger_amps:        plan.charger_amps,
+  charger_model:       plan.charger_model || '',
+  battery_type:        plan.battery_type || '',
+  max_efficiency:      maxEff,
+  work_hours:          workHours,
+  truck_load:          plan.truck_load,
+  compartment_w:       plan.compartment_w || compartmentW,
+  ebox:                plan.ebox || '',
+  per_shift:           workAtMaxEff.perShift,
+  results:             results,
+  passed:              passed,
+  scenario:            scenarioLabel,
+  chargingEvents:      chargingEvents,
+  dual_battery:        params.dual_battery || false,
+  velox_battery_count: veloxBatteryCount,
+  single_slot_ah:      singleSlotAh
 };
       passResults.push(simRecord);
       allSimResults.push(simRecord);
@@ -3714,6 +3740,16 @@ function sendToDealerFromRow() {
         var truckLoad  = rowCol(row, 'Truck Load A/hm');
         var useType    = (rowCol(row, 'Use Type') || 'average').toLowerCase();
         var batType    = battAh <= 450 ? 'VeloxFlex' : battAh <= 700 ? 'VeloxPlus' : 'VeloxMax';
+
+        // Detect dual-battery truck from flags column
+        var notesFlags = rowCol(row, 'Notes/Flags') || '';
+        var isDualBatteryTruck = notesFlags.toUpperCase().includes('DUAL_BATTERY');
+        var isThisSimDual = isDualBatteryTruck && battAh > 700;
+        var perSlotAh = isThisSimDual ? Math.round(battAh / 2) : battAh;
+        var simBatLabel = isThisSimDual
+          ? '2× ' + batType + ' ' + volt + 'V ' + perSlotAh + 'Ah'
+          : batType + ' ' + volt + 'V ' + battAh + 'Ah';
+
         var useLabel   = isEN
           ? (useType === 'heavy' ? 'heavy' : useType === 'moderate' ? 'moderate' : 'average')
           : (useType === 'heavy' ? 'élevée' : useType === 'moderate' ? 'modérée' : 'moyenne');
@@ -3722,15 +3758,21 @@ function sendToDealerFromRow() {
         var minMatch   = scenario.match(/(\d+)min/i);
         if (minMatch) chargeMin = parseInt(minMatch[1]);
 
-        body += 'S' + (idx + 1) + ' - ' + batType + ' ' + volt + 'V ' + battAh + 'Ah + Omni ' + chargerA + 'A\n';
+        body += 'S' + (idx + 1) + ' - ' + simBatLabel + ' + Omni ' + chargerA + 'A\n';
         if (isEN) {
           body += '  • Autonomy of ' + workHours + ' per shift\n';
           body += '  • ' + chargeMin + ' min of charge per shift\n';
-          body += '  • ' + useLabel.charAt(0).toUpperCase() + useLabel.slice(1) + ' consumption at ' + truckLoad + ' A/h\n\n';
+          body += '  • ' + useLabel.charAt(0).toUpperCase() + useLabel.slice(1) + ' consumption at ' + truckLoad + ' A/h\n';
+          if (isThisSimDual) body += '  • Dual battery — 2 batteries, 1 shared charger\n';
+          if (!isThisSimDual && isDualBatteryTruck) body += '  • Single battery + ballast weight\n';
+          body += '\n';
         } else {
           body += '  • Autonomie de ' + workHours + ' par quart\n';
           body += '  • ' + chargeMin + ' minutes de charge par quart\n';
-          body += '  • Consommation ' + useLabel + ' à ' + truckLoad + ' A/h\n\n';
+          body += '  • Consommation ' + useLabel + ' à ' + truckLoad + ' A/h\n';
+          if (isThisSimDual) body += '  • Double batterie — 2 batteries, 1 chargeur partagé\n';
+          if (!isThisSimDual && isDualBatteryTruck) body += '  • 1 batterie + poids de lest\n';
+          body += '\n';
         }
       });
 
