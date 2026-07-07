@@ -987,7 +987,11 @@ function selectSimulations(dekaResult, eboxResult, params) {
 
  // ── VeloxPlus: 1 sim only, highest charger available ─────────────────────
   // For 2×8h: gating in runPass still applies (skips if Flex passed ≤210% utilization)
-  const plusBat = effectiveBatteries.find(function(b) { return isVeloxPlusType(b); });
+  // For dual-battery trucks: prefer 700Ah (single battery + ballast) over 550Ah
+  const plusBat = params.dual_battery
+    ? (effectiveBatteries.find(function(b) { return isVeloxPlusType(b) && b.ah >= 700; }) ||
+       effectiveBatteries.find(function(b) { return isVeloxPlusType(b); }))
+    : effectiveBatteries.find(function(b) { return isVeloxPlusType(b); });
   if (plusBat) {
     const plusTopSeq = voltage === 80 ? [400, 335, 270]
                      : voltage === 72 ? [475, 375, 310]

@@ -1149,7 +1149,16 @@ function _htmlBuildSimEntries(allSimResults, allSimScreenshots, params) {
     else if (bt.includes('PLUS'))  batteryModel = 'Plus';
     else if (bt.includes('CUSTOM')) batteryModel = 'Custom';
 
-    // Derive shift start from Pre-Shift Charge end time — most reliable source
+    // For dual-battery sims, derive type from per-slot Ah not combined
+    const dualVeloxCheck = (sim.dual_battery && (sim.velox_battery_count || 1) > 1);
+    if (dualVeloxCheck) {
+      const perSlotAhCheck = Math.round((sim.battery_ah || 0) / (sim.velox_battery_count || 2));
+      if (perSlotAhCheck <= 450) batteryModel = 'Flex';
+      else if (perSlotAhCheck <= 700) batteryModel = 'Plus';
+      else batteryModel = 'Max';
+    }
+
+        // Derive shift start from Pre-Shift Charge end time — most reliable source
     // Falls back to params.shift_start_hour, then 7 as last resort
 let shiftStart = 7;
     const is24hEntry = (params.shifts === 3 && (params.shift_duration || 8) === 8) ||
