@@ -235,6 +235,7 @@ Rules:
 - If the email contains "K-Mod" or "K-MOD" anywhere, forklift_model must be "K-MOD" — never "VNA"
 - If the email contains "A-Mod" or "A-MOD" anywhere, forklift_model must be "A-MOD" — never "VNA"
 - When a forklift model contains a slash (/) and both sides look like variant codes (e.g. "C40S/C50S", "C30TT/QM"), this means two variants are listed together — always extract only the FIRST variant before the slash. Example: "4750-C40S/C50S" → "4750-C40S", "4460-C30TT/QM" → "4460-C30TT". Exception: if the slash is part of a capacity or mast designation like "E50/600HL" or "E25/600HL", keep the full string — these follow the pattern of digits/digits.
+- EXCEPTION to the above: Linde 1471 series heavy trucks (E100, E120, E140, E150, E160, E180) are always written with a wheelbase/chassis suffix after the slash (e.g. "E100/600", "E100/900", "E100/1200", "E180/900"). This suffix reflects wheelbase configuration only — it does NOT change the battery, voltage, or compartment spec. For these models specifically, ALWAYS strip the suffix and return only the base model. Example: "LINDE 1471 E100/1200" → forklift_model: "E100". "E180/900" → forklift_model: "E180". Recognize this case by: manufacturer is Linde (or "1471" appears in the text) AND the model matches E100, E120, E140, E150, E160, or E180 followed by a slash and a number.
 - When multiple truck options are listed (Option 1, Option 2, etc.), always populate the trucks array with each option as a separate truck object — never leave trucks as []
 - customer is NEVER a forklift manufacturer brand name (Linde, Toyota, Crown, etc.)
 - When dealer E.M.U is encoutered in an E-mail, ALWAYS assume it to be the bealder Techlift and should be seen as such in the parameters.
@@ -751,7 +752,7 @@ function selectSimulations(dekaResult, eboxResult, params) {
   const shifts     = params.shifts || 2;
   const shiftDur   = params.shift_duration || 8;
   const bestMatch  = dekaResult.exact_matches[0] || dekaResult.fuzzy_matches[0] || null;
-  const leadAcidAh = bestMatch ? bestMatch.ah : 0;
+  const leadAcidAh = params.lead_acid_ah > 0 ? params.lead_acid_ah : (bestMatch ? bestMatch.ah : 0);
   const compartW   = bestMatch ? bestMatch.compartment_w : 0;
   const divisor    = useType === 'heavy' ? 8 : useType === 'moderate' ? 9 : 10;
   const truckLoad  = leadAcidAh > 0 ? Math.round(leadAcidAh * 0.80 / divisor) : 0;
@@ -3278,10 +3279,17 @@ const allUnread = GmailApp.search(
     'to:marc-antoine@veloxpower.com is:unread -label:VELOX-PROCESSED -in:sent',
     0, 20
   );
-// Process oldest first — Gmail returns newest-first, so take the last item
-const threads = allUnread.length > 0 ? [allUnread[allUnread.length - 1]] : [];
 
-  Logger.log('Unread threads to evaluate: ' + threads.length);
+// Sort explicitly oldest-first by last message date — GmailApp.search's return order
+// is NOT reliably chronological (confirmed empirically July 6, 2026)
+allUnread.sort(function(a, b) {
+  return a.getLastMessageDate() - b.getLastMessageDate();
+});
+const threads = allUnread.length > 0 ? [allUnread[0]] : [];
+
+Logger.log('Unread threads to evaluate: ' + threads.length +
+  ' (oldest of ' + allUnread.length + ' found: ' +
+  (threads[0] ? threads[0].getFirstMessageSubject() : 'none') + ')');
 
   threads.forEach(function(thread) {
     try {
@@ -4325,4 +4333,24 @@ function processQueuedTrucks() {
     }
   }
   Logger.log('No PENDING items in QUEUE');
+}
+
+function testLindeE100_2x450Ah() {
+  runSimulationPipeline({
+    dealer: 'Elevex',
+    customer: 'Test Validation',
+    sender_name: 'Martin Courtois',
+    forklift_manufacturer: 'LINDE',
+    forklift_model: 'E100',
+    voltage: 80,
+    shifts: 1,
+    shift_duration: 8,
+    use_type: 'average',
+    lead_acid_ah: 1500,
+    battery_ah: 900,      // 2x 450Ah VeloxFlex, combined capacity
+    charger_amps: 400,    // largest available 80V charger — single shared unit
+    language: 'en',
+    shift_start_hour: 7,
+    _skipSimDb: true
+  });
 }
