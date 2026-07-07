@@ -277,7 +277,7 @@ const pillLine3    = modelDisplay + ' ' + voltage + 'V – ' + shiftSuffix;
     // ── CLIENT LOGO — top left (only when client logo available)
     (clientLogoB64 ?
       '<img src="data:image/png;base64,' + clientLogoB64 + '" ' +
-      'style="position:absolute;left:85px;top:15px;width:120px;height:auto;object-fit:contain;z-index:5;">'
+      'style="position:absolute;left:85px;top:15px;height:60px;width:auto;max-width:220px;object-fit:contain;z-index:5;">'
     : '') +
 
     // ── DEALER LOGO — original size when no client, smaller centered when client present
