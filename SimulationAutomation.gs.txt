@@ -2649,7 +2649,8 @@ Resultat global:     ${sim.passed ? '✅ SUFFISANT' : String(sim.flag || '').inc
   const shiftLabel = params.shift_duration === 12 ? params.shifts + 'x 12h' : params.shifts + ' shifts';
   const flagsText  = flags.length > 0 ? flags.join('\n   ') : 'Aucun';
   const totalViable = allSimResults.filter(function(s) { return s.passed; }).length;
-  const totalNonViable = allSimResults.length - totalViable;
+  const totalMaximum   = allSimResults.filter(function(s){ return !s.passed && String(s.flag||'').includes('VELOXPLUS_POUSSE_AU_MAXIMUM'); }).length;
+const totalNonViable = allSimResults.length - totalViable - totalMaximum;
 
   const body = `Bonjour Marc-Antoine,
 
