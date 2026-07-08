@@ -2541,7 +2541,7 @@ function sendPipelineReviewEmail(params, allSimResults, flags, constrainedEvents
   const recipient = 'marc-antoine@veloxpower.com';
 
   const workingSims  = allSimResults.filter(function(s) { return s.passed; });
-  const maxSims      = allSimResults.filter(function(s) { return !s.passed && s.scenario && String(s.scenario).includes('MAXIMUM'); });
+  const maxSims      = allSimResults.filter(function(s) { return !s.passed && String(s.flag || '').includes('VELOXPLUS_POUSSE_AU_MAXIMUM'); });
   const overallPass  = workingSims.length > 0 || maxSims.length > 0;
   const statusTag    = workingSims.length > 0 ? '[OK]' : maxSims.length > 0 ? '[MAXIMUM]' : '[ATTENTION]';
   const shiftDesc   = params.shift_duration === 12 ? params.shifts + 'x12h' : params.shifts + 'x8h';
