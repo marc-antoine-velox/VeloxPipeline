@@ -2160,7 +2160,8 @@ allSimScreenshots.push(readAllSOC());
   chargingEvents:      chargingEvents,
   dual_battery:        params.dual_battery || false,
   velox_battery_count: veloxBatteryCount,
-  single_slot_ah:      singleSlotAh
+  single_slot_ah:      singleSlotAh,
+  flag:                effSearch.flag || ''
 };
       passResults.push(simRecord);
       allSimResults.push(simRecord);
@@ -2578,7 +2579,7 @@ Ah restant:          ${Math.round(sim.results.remaining_ah)} Ah
 Heures travail:      ${sim.work_hours}
 SOC minimum atteint: ${Math.round(sim.results.min_soc)}%${soc1}${soc2}${soc3}
 % batterie utilisee: ${Math.round(sim.results.battery_used_pct)}%
-Resultat global:     ${sim.passed ? '✅ SUFFISANT' : '❌ INSUFFISANT'}
+Resultat global:     ${sim.passed ? '✅ SUFFISANT' : String(sim.flag || '').includes('VELOXPLUS_POUSSE_AU_MAXIMUM') ? '⚠️ MAXIMUM ATTEINT' : '❌ INSUFFISANT'}
 `;
   }
 
@@ -2652,7 +2653,7 @@ Resultat global:     ${sim.passed ? '✅ SUFFISANT' : '❌ INSUFFISANT'}
 
   const body = `Bonjour Marc-Antoine,
 
-${allSimResults.length} simulation(s) — ${totalViable} viable(s), ${totalNonViable} non viable(s).${isDoubleRun ? '\n2 scénarios de charge: Scénario A (' + statedMins + ' min/shift — contrainte client) | Scénario B (' + defaultMins + ' min/shift — horaire standard).' : ''}
+${allSimResults.length} simulation(s) — ${totalViable} viable(s), ${allSimResults.filter(function(s){ return !s.passed && String(s.flag||'').includes('VELOXPLUS_POUSSE_AU_MAXIMUM'); }).length} au maximum, ${totalNonViable} non viable(s).${isDoubleRun ? '\n2 scénarios de charge: Scénario A (' + statedMins + ' min/shift — contrainte client) | Scénario B (' + defaultMins + ' min/shift — horaire standard).' : ''}
 
 [ INFORMATIONS GENERALES ]
 Dealer:            ${params.dealer || 'Non specifie'}
