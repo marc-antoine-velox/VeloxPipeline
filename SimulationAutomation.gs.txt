@@ -406,7 +406,10 @@ function logSimulationResult(params, results, simNumber) {
 
   let status;
   if (params.overall_passed === false) {
-    status = 'FAIL';
+    const isMaxPushed = (params.flags || []).some(function(f) {
+      return String(f).includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
+    });
+    status = isMaxPushed ? 'MAXIMUM' : 'FAIL';
   } else if (results.status === 'PASS' && results.battery_used_pct > 80) {
     status = 'REVIEW';
   } else if (results.status === 'PASS') {
@@ -1424,10 +1427,30 @@ function findMaxEfficiency(plan, chargingEvents, veloxFlexMaxEff, targetEfficien
       else break;
     }
   } else if (coarseFailAt === startEff || lastPassEff === 0) {
-    lastPassEff     = startEff;
-    lastPassResults = runSingleSim(plan, chargingEvents, startEff);
-    flag            = 'COMBO_FAIBLE_EFF_MIN_' + startEff + 'PCT';
-    Logger.log('  Failed at start — reporting at ' + startEff + '%');
+    // VeloxPlus failed at start efficiency due to SOC — search downward
+    // to find maximum efficiency where SOC stays at or above 20%
+    const isVeloxPlusSearch = String(plan.battery_type || '').toUpperCase().includes('PLUS');
+    let foundBelow = false;
+    if (isVeloxPlusSearch) {
+      for (let eff = startEff - 1; eff >= 10; eff--) {
+        const r = runSingleSim(plan, chargingEvents, eff);
+        Logger.log('  Max-search ' + eff + '% -> SOC min: ' + Math.round(r.min_soc || 0) + '%');
+        if (r.min_soc >= 20) {
+          lastPassEff     = eff;
+          lastPassResults = r;
+          foundBelow      = true;
+          flag            = 'VELOXPLUS_POUSSE_AU_MAXIMUM — ' + eff + '% efficacité max | SOC maintenu à 20%';
+          Logger.log('  VeloxPlus pushed to maximum — efficiency: ' + eff + '%');
+          break;
+        }
+      }
+    }
+    if (!foundBelow) {
+      lastPassEff     = startEff;
+      lastPassResults = runSingleSim(plan, chargingEvents, startEff);
+      flag            = 'COMBO_FAIBLE_EFF_MIN_' + startEff + 'PCT';
+      Logger.log('  Failed at start — no passing efficiency found');
+    }
   }
   if (isVeloxPlus && veloxFlexMaxEff > 0) {
     const required = veloxFlexMaxEff + 15;
@@ -2517,9 +2540,10 @@ Intervention manuelle requise.`;
 function sendPipelineReviewEmail(params, allSimResults, flags, constrainedEvents, standardEvents, allPdfs, statedMins, defaultMins, isDoubleRun) {
   const recipient = 'marc-antoine@veloxpower.com';
 
-  const workingSims = allSimResults.filter(function(s) { return s.passed; });
-  const overallPass = workingSims.length > 0;
-  const statusTag   = overallPass ? '[OK]' : '[ATTENTION]';
+  const workingSims  = allSimResults.filter(function(s) { return s.passed; });
+  const maxSims      = allSimResults.filter(function(s) { return !s.passed && s.scenario && String(s.scenario).includes('MAXIMUM'); });
+  const overallPass  = workingSims.length > 0 || maxSims.length > 0;
+  const statusTag    = workingSims.length > 0 ? '[OK]' : maxSims.length > 0 ? '[MAXIMUM]' : '[ATTENTION]';
   const shiftDesc   = params.shift_duration === 12 ? params.shifts + 'x12h' : params.shifts + 'x8h';
 
   const subject = statusTag + ' Simulation a reviser — ' +
@@ -2527,7 +2551,12 @@ function sendPipelineReviewEmail(params, allSimResults, flags, constrainedEvents
                   params.forklift_manufacturer + ' ' + params.forklift_model + ' ' + params.voltage + 'V | ' + shiftDesc;
 
   function buildSimBlock(sim) {
-    const statusTxt = sim.results.status === 'PASS' ? 'PASS' : 'FAIL';
+    const isMaxPushed = allSimResults.some(function(s) {
+        return s.simNumber === sim.simNumber &&
+               (s.flag || '').includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
+      });
+      const statusTxt = sim.results.status === 'PASS' ? 'PASS'
+        : isMaxPushed ? '⚠️ MAXIMUM ATTEINT' : 'FAIL';
     const soc1 = sim.results.peak_soc_s1 !== undefined ? '\nSOC max shift 1:     ' + Math.round(sim.results.peak_soc_s1) + '%' : '';
     const soc2 = sim.results.peak_soc_s2 !== undefined ? '\nSOC max shift 2:     ' + Math.round(sim.results.peak_soc_s2) + '%' : '';
     const soc3 = sim.results.peak_soc_s3 !== undefined ? '\nSOC max shift 3:     ' + Math.round(sim.results.peak_soc_s3) + '%' : '';
@@ -4396,6 +4425,49 @@ function testLindeE100_2x450Ah() {
     battery_ah: 900,      // 2x 450Ah VeloxFlex, combined capacity
     charger_amps: 400,    // largest available 80V charger — single shared unit
     language: 'en',
+    shift_start_hour: 7,
+    _skipSimDb: true
+  });
+}
+
+function testMartinCourtois_LindeE100() {
+  runSimulationPipeline({
+    dealer: 'Elevex',
+    customer: '',
+    sender_name: 'Martin Courtois',
+    sender_email: 'mcourtois@elevex.ca',
+    forklift_manufacturer: 'LINDE',
+    forklift_model: 'E100',
+    voltage: 80,
+    shifts: 1,
+    shift_duration: 8,
+    use_type: 'average',
+    target_efficiency: 50,
+    battery_ah: 900,
+    charger_amps: 0,
+    ip54_charger: true,
+    language: 'fr',
+    shift_start_hour: 7,
+    _skipSimDb: true
+  });
+}
+
+function testVitesseTransport_550Ah() {
+  runSimulationPipeline({
+    dealer: 'Elevex',
+    customer: 'Vitesse Transport',
+    sender_name: 'Martin Courtois',
+    sender_email: 'mcourtois@elevex.ca',
+    forklift_manufacturer: 'LINDE',
+    forklift_model: 'E20',
+    voltage: 48,
+    shifts: 2,
+    shift_duration: 8,
+    use_type: 'heavy',
+    lead_acid_ah: 1210,
+    battery_ah: 550,
+    charger_amps: 400,
+    language: 'fr',
     shift_start_hour: 7,
     _skipSimDb: true
   });
