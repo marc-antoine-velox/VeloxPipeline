@@ -2217,9 +2217,9 @@ allSimScreenshots.push(readAllSOC());
             // Sim 1 failed due to insufficient work hours — try 18KVA automatically
             Logger.log('  Flex failed work threshold — injecting 18KVA sim automatically');
             const plan18 = Object.assign({}, plan, {
-              charger_amps:        kva18Charger.amps,
+              charger_amps:        Math.min(kva18Charger.amps, Math.floor(plan.battery_ah * 0.80)),
               charger_model:       kva18Charger.model,
-              label:               'Sim ' + (simNumber + 1) + ' — ' + plan.battery_ah + 'Ah + ' + kva18Charger.amps + 'A (VeloxFlex 18KVA)',
+              label:               'Sim ' + (simNumber + 1) + ' — ' + plan.battery_ah + 'Ah + ' + Math.min(kva18Charger.amps, Math.floor(plan.battery_ah * 0.80)) + 'A (VeloxFlex 18KVA)',
               simIndex:            simNumber + 1,
               conditional:         false,
               check18KVAThreshold: false
@@ -2296,9 +2296,9 @@ allSimScreenshots.push(readAllSOC());
             if (estimatedGain >= threshold6pct) {
               Logger.log('  18KVA threshold met (est. +' + estimatedGain + 'h vs threshold +' + threshold6pct + 'h) — injecting');
               const plan18 = Object.assign({}, plan, {
-                charger_amps:        kva18Charger.amps,
+                charger_amps:        Math.min(kva18Charger.amps, Math.floor(plan.battery_ah * 0.80)),
                 charger_model:       kva18Charger.model,
-                label:               'Sim ' + (simNumber + 1) + ' — ' + plan.battery_ah + 'Ah + ' + kva18Charger.amps + 'A (VeloxFlex 18KVA)',
+                label:               'Sim ' + (simNumber + 1) + ' — ' + plan.battery_ah + 'Ah + ' + Math.min(kva18Charger.amps, Math.floor(plan.battery_ah * 0.80)) + 'A (VeloxFlex 18KVA)',
                 simIndex:            simNumber + 1,
                 conditional:         false,
                 check18KVAThreshold: false
@@ -4416,70 +4416,4 @@ function processQueuedTrucks() {
     }
   }
   Logger.log('No PENDING items in QUEUE');
-<<<<<<< HEAD
-=======
-}
-
-function testLindeE100_2x450Ah() {
-  runSimulationPipeline({
-    dealer: 'Elevex',
-    customer: 'Test Validation',
-    sender_name: 'Martin Courtois',
-    forklift_manufacturer: 'LINDE',
-    forklift_model: 'E100',
-    voltage: 80,
-    shifts: 1,
-    shift_duration: 8,
-    use_type: 'average',
-    lead_acid_ah: 1500,
-    battery_ah: 900,      // 2x 450Ah VeloxFlex, combined capacity
-    charger_amps: 400,    // largest available 80V charger — single shared unit
-    language: 'en',
-    shift_start_hour: 7,
-    _skipSimDb: true
-  });
-}
-
-function testMartinCourtois_LindeE100() {
-  runSimulationPipeline({
-    dealer: 'Elevex',
-    customer: '',
-    sender_name: 'Martin Courtois',
-    sender_email: 'mcourtois@elevex.ca',
-    forklift_manufacturer: 'LINDE',
-    forklift_model: 'E100',
-    voltage: 80,
-    shifts: 1,
-    shift_duration: 8,
-    use_type: 'average',
-    target_efficiency: 50,
-    battery_ah: 900,
-    charger_amps: 0,
-    ip54_charger: true,
-    language: 'fr',
-    shift_start_hour: 7,
-    _skipSimDb: true
-  });
-}
-
-function testVitesseTransport_550Ah() {
-  runSimulationPipeline({
-    dealer: 'Elevex',
-    customer: 'Vitesse Transport',
-    sender_name: 'Martin Courtois',
-    sender_email: 'mcourtois@elevex.ca',
-    forklift_manufacturer: 'LINDE',
-    forklift_model: 'E20',
-    voltage: 48,
-    shifts: 2,
-    shift_duration: 8,
-    use_type: 'heavy',
-    lead_acid_ah: 1210,
-    battery_ah: 550,
-    charger_amps: 400,
-    language: 'fr',
-    shift_start_hour: 7,
-    _skipSimDb: true
-  });
->>>>>>> e1177c8d59a802b453e47726ea7921555efc9309
 }
