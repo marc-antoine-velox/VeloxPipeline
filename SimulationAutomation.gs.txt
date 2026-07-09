@@ -4416,4 +4416,70 @@ function processQueuedTrucks() {
     }
   }
   Logger.log('No PENDING items in QUEUE');
+<<<<<<< HEAD
+=======
+}
+
+function testLindeE100_2x450Ah() {
+  runSimulationPipeline({
+    dealer: 'Elevex',
+    customer: 'Test Validation',
+    sender_name: 'Martin Courtois',
+    forklift_manufacturer: 'LINDE',
+    forklift_model: 'E100',
+    voltage: 80,
+    shifts: 1,
+    shift_duration: 8,
+    use_type: 'average',
+    lead_acid_ah: 1500,
+    battery_ah: 900,      // 2x 450Ah VeloxFlex, combined capacity
+    charger_amps: 400,    // largest available 80V charger — single shared unit
+    language: 'en',
+    shift_start_hour: 7,
+    _skipSimDb: true
+  });
+}
+
+function testMartinCourtois_LindeE100() {
+  runSimulationPipeline({
+    dealer: 'Elevex',
+    customer: '',
+    sender_name: 'Martin Courtois',
+    sender_email: 'mcourtois@elevex.ca',
+    forklift_manufacturer: 'LINDE',
+    forklift_model: 'E100',
+    voltage: 80,
+    shifts: 1,
+    shift_duration: 8,
+    use_type: 'average',
+    target_efficiency: 50,
+    battery_ah: 900,
+    charger_amps: 0,
+    ip54_charger: true,
+    language: 'fr',
+    shift_start_hour: 7,
+    _skipSimDb: true
+  });
+}
+
+function testVitesseTransport_550Ah() {
+  runSimulationPipeline({
+    dealer: 'Elevex',
+    customer: 'Vitesse Transport',
+    sender_name: 'Martin Courtois',
+    sender_email: 'mcourtois@elevex.ca',
+    forklift_manufacturer: 'LINDE',
+    forklift_model: 'E20',
+    voltage: 48,
+    shifts: 2,
+    shift_duration: 8,
+    use_type: 'heavy',
+    lead_acid_ah: 1210,
+    battery_ah: 550,
+    charger_amps: 400,
+    language: 'fr',
+    shift_start_hour: 7,
+    _skipSimDb: true
+  });
+>>>>>>> e1177c8d59a802b453e47726ea7921555efc9309
 }
