@@ -1,0 +1,408 @@
+// =============================================================================
+// ManualSimRunner.gs
+// Manual simulation runner — bypasses Gemini, Deka Pull, and Ebox verification.
+// Use when: custom battery, unusual forklift, or any case where you already
+// know the exact battery/charger combo and just need the simulation + Portée.
+//
+// Sheet: "Manual Sim" tab in the main spreadsheet.
+// Menu:  Velox → Manual Simulation → Open Form / Run Simulation
+// =============================================================================
+
+// ─────────────────────────────────────────────────────────────────────────────
+// onOpen — merged with SimulationAutomation.gs menu
+// IMPORTANT: Delete the onOpen() in SimulationAutomation.gs and keep only this one.
+// ─────────────────────────────────────────────────────────────────────────────
+function onOpen() {
+  SpreadsheetApp.getActiveSpreadsheet().addMenu('Velox', [
+    { name: 'Send to Dealer',          functionName: 'sendToDealerFromRow'      },
+    { name: 'Check New Emails',        functionName: 'checkForNewSimulations'   },
+    { name: 'Process Queue',           functionName: 'checkPendingSimulations'  },
+    null, // separator
+    { name: 'Manual Simulation',       functionName: 'openManualSimSheet'       },
+    { name: 'Run Manual Simulation',   functionName: 'runManualSim'             },
+  ]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// openManualSimSheet — navigates to the Manual Sim tab, creates it if missing
+// ─────────────────────────────────────────────────────────────────────────────
+function openManualSimSheet() {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Manual Sim');
+  if (!sheet) {
+    sheet = _createManualSimSheet(ss);
+    SpreadsheetApp.getUi().alert('✅ "Manual Sim" tab created. Fill in the fields and click Velox → Run Manual Simulation.');
+  }
+  ss.setActiveSheet(sheet);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _createManualSimSheet — builds the input sheet with labels + dropdowns
+// ─────────────────────────────────────────────────────────────────────────────
+function _createManualSimSheet(ss) {
+  var sheet = ss.insertSheet('Manual Sim');
+
+  // Column widths
+  sheet.setColumnWidth(1, 220); // label
+  sheet.setColumnWidth(2, 280); // input
+  sheet.setColumnWidth(3, 420); // hint
+
+  // Header
+  sheet.getRange('A1:C1').merge()
+    .setValue('🔧  VELOX — Manual Simulation Runner')
+    .setFontSize(14).setFontWeight('bold')
+    .setBackground('#3D4859').setFontColor('#FFFFFF')
+    .setHorizontalAlignment('center');
+
+  var rows = [
+    // [row, label, default, hint, type]
+    // ── Dealer / Contact ─────────────────────────────────────────────────────
+    [2,  '── DEALER / CONTACT ──',  '',                    '',                                                    'section'],
+    [3,  'Dealer',                   'Prime Material Handling', 'Must match exact name in Config sheet A40:A100', 'text'],
+    [4,  'Customer',                 '',                    'End client name (if different from dealer)',          'text'],
+    [5,  'Contact name',             '',                    'e.g. Aaron Wilson',                                   'text'],
+    [6,  'Contact email',            '',                    'e.g. aaron.wilson@primematerial.com',                 'text'],
+    [7,  'Language',                 'en',                  'en or fr — controls Portée language',                'dropdown:en,fr'],
+
+    // ── Forklift ─────────────────────────────────────────────────────────────
+    [8,  '── FORKLIFT ──',           '',                    '',                                                    'section'],
+    [9,  'Manufacturer',             '',                    'e.g. COMBILIFT, LINDE, TOYOTA',                      'text'],
+    [10, 'Model',                    '',                    'e.g. WR1500, E20, 8FBCU25',                          'text'],
+    [11, 'Voltage (V)',              '',                    '24 / 36 / 48 / 72 / 80',                             'number'],
+    [12, 'Compartment (L x W x H)', '',                    'In inches, e.g. 16.06 x 8.66 x 33.59 — leave blank if unknown', 'text'],
+
+    // ── Battery & Charger ─────────────────────────────────────────────────────
+    [13, '── BATTERY & CHARGER ──',  '',                   '',                                                    'section'],
+    [14, 'Battery Ah (combined)',    '',                    'Total Ah for the sim — e.g. 460 for 2× 230Ah',       'number'],
+    [15, 'Battery type',             'VeloxPlus',           'VeloxPlus or VeloxFlex',                             'dropdown:VeloxPlus,VeloxFlex'],
+    [16, 'Charger amps',             '',                    'e.g. 150, 250, 400',                                 'number'],
+    [17, 'Charger model',            '',                    'e.g. HFM-G6-6003-48/150 — leave blank if unknown',   'text'],
+
+    // ── Simulation parameters ─────────────────────────────────────────────────
+    [18, '── SIMULATION ──',         '',                   '',                                                    'section'],
+    [19, 'Lead-acid Ah ref',         '',                    'Reference lead-acid capacity for truck load calc',    'number'],
+    [20, 'Shifts',                   1,                     '1, 2, or 3',                                         'dropdown:1,2,3'],
+    [21, 'Shift duration (h)',        8,                    '8 or 12',                                             'dropdown:8,12'],
+    [22, 'Use type',                 'average',             'average / heavy / moderate',                          'dropdown:average,heavy,moderate'],
+    [23, 'Shift start hour',          7,                    '0–23 (24h format) — default 7',                      'number'],
+    [24, 'IP54 charger?',            'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
+    [25, 'Heated charger?',          'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
+
+    // ── Notes ─────────────────────────────────────────────────────────────────
+    [26, '── OPTIONAL ──',           '',                   '',                                                    'section'],
+    [27, 'Notes',                    '',                    'Will appear in LOGS — e.g. [CUSTOM BATTERY] EVE 230Ah', 'text'],
+  ];
+
+  rows.forEach(function(r) {
+    var row = r[0], label = r[1], def = r[2], hint = r[3], type = r[4];
+
+    if (type === 'section') {
+      sheet.getRange(row, 1, 1, 3).merge()
+        .setValue(label)
+        .setFontWeight('bold').setFontSize(10)
+        .setBackground('#4C576A').setFontColor('#66BFD4')
+        .setHorizontalAlignment('left');
+      return;
+    }
+
+    sheet.getRange(row, 1).setValue(label).setFontWeight('bold').setFontSize(10);
+    var cell = sheet.getRange(row, 2);
+    if (def !== '') cell.setValue(def);
+    cell.setBackground('#F6F8FA').setBorder(true, true, true, true, false, false, '#DCE3E9', SpreadsheetApp.BorderStyle.SOLID);
+    sheet.getRange(row, 3).setValue(hint).setFontColor('#6B7686').setFontSize(9).setFontStyle('italic');
+
+    if (type.startsWith('dropdown:')) {
+      var options = type.replace('dropdown:', '').split(',');
+      var rule = SpreadsheetApp.newDataValidation()
+        .requireValueInList(options, true)
+        .setAllowInvalid(false)
+        .build();
+      cell.setDataValidation(rule);
+    }
+    if (type === 'number') {
+      cell.setNumberFormat('@'); // keep as text to avoid accidental formatting
+    }
+  });
+
+  // Run button hint
+  sheet.getRange('A29:C29').merge()
+    .setValue('▶  When ready: Velox menu → Run Manual Simulation')
+    .setFontSize(11).setFontWeight('bold')
+    .setBackground('#66BFD4').setFontColor('#18202A')
+    .setHorizontalAlignment('center');
+
+  // Freeze header
+  sheet.setFrozenRows(1);
+
+  return sheet;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _readManualSimParams — reads all input cells from the Manual Sim sheet
+// ─────────────────────────────────────────────────────────────────────────────
+function _readManualSimParams() {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Manual Sim');
+  if (!sheet) throw new Error('"Manual Sim" sheet not found. Run Velox → Manual Simulation first to create it.');
+
+  function cell(row) {
+    var v = sheet.getRange(row, 2).getValue();
+    return v === null || v === undefined ? '' : String(v).trim();
+  }
+  function num(row) {
+    var v = parseFloat(cell(row));
+    return isNaN(v) ? 0 : v;
+  }
+
+  return {
+    dealer:                cell(3),
+    customer:              cell(4),
+    sender_name:           cell(5),
+    sender_email:          cell(6),
+    language:              cell(7) || 'en',
+    forklift_manufacturer: cell(9).toUpperCase(),
+    forklift_model:        cell(10).toUpperCase(),
+    voltage:               num(11),
+    compartment:           cell(12),
+    battery_ah:            num(14),
+    battery_type:          cell(15) || 'VeloxPlus',
+    charger_amps:          num(16),
+    charger_model:         cell(17),
+    lead_acid_ah:          num(19),
+    shifts:                num(20) || 1,
+    shift_duration:        num(21) || 8,
+    use_type:              cell(22) || 'average',
+    shift_start_hour:      num(23) || 7,
+    ip54_charger:          cell(24).toUpperCase() === 'YES',
+    heating_option:        cell(25).toUpperCase() === 'YES',
+    notes:                 cell(27),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// runManualSim — main entry point called from the Velox menu
+// ─────────────────────────────────────────────────────────────────────────────
+function runManualSim() {
+  var ui = SpreadsheetApp.getUi();
+
+  // ── 1. Read params from sheet ─────────────────────────────────────────────
+  var p;
+  try {
+    p = _readManualSimParams();
+  } catch(e) {
+    ui.alert('❌ Error reading Manual Sim sheet:\n' + e.message);
+    return;
+  }
+
+  // ── 2. Basic validation ───────────────────────────────────────────────────
+  var missing = [];
+  if (!p.dealer)                missing.push('Dealer');
+  if (!p.forklift_manufacturer) missing.push('Manufacturer');
+  if (!p.forklift_model)        missing.push('Model');
+  if (!p.voltage)               missing.push('Voltage');
+  if (!p.battery_ah)            missing.push('Battery Ah');
+  if (!p.charger_amps)          missing.push('Charger amps');
+  if (!p.lead_acid_ah)          missing.push('Lead-acid Ah ref');
+  if (missing.length > 0) {
+    ui.alert('❌ Missing required fields:\n• ' + missing.join('\n• '));
+    return;
+  }
+
+  // ── 3. Confirm ────────────────────────────────────────────────────────────
+  var confirm = ui.alert(
+    'Run Manual Simulation',
+    p.forklift_manufacturer + ' ' + p.forklift_model + ' — ' + p.voltage + 'V\n' +
+    'Battery: ' + p.battery_ah + 'Ah ' + p.battery_type + '\n' +
+    'Charger: ' + p.charger_amps + 'A\n' +
+    'Shifts: ' + p.shifts + ' × ' + p.shift_duration + 'h\n' +
+    'Dealer: ' + p.dealer + '\n\n' +
+    'Proceed?',
+    ui.ButtonSet.YES_NO
+  );
+  if (confirm !== ui.Button.YES) return;
+
+  // ── 4. Build plan object (mirrors selectSimulations output) ───────────────
+  var divisor    = p.use_type === 'heavy' ? 8 : p.use_type === 'moderate' ? 9 : 10;
+  var truckLoad  = Math.round(p.lead_acid_ah * 0.80 / divisor);
+  var truckEff   = p.use_type === 'light' ? 50 : 80;
+  var isVeloxPlus = p.battery_type.toUpperCase().includes('PLUS');
+
+  var plan = {
+    battery_ah:        p.battery_ah,
+    charger_amps:      p.charger_amps,
+    charger_model:     p.charger_model,
+    battery_type:      p.battery_type,
+    truck_load:        truckLoad,
+    truck_efficiency:  truckEff,
+    lead_acid_ah:      p.lead_acid_ah,
+    compartment_w:     0,
+    shifts:            p.shifts,
+    shift_duration:    p.shift_duration,
+    voltage:           p.voltage,
+    isVeloxPlusPlan:   isVeloxPlus,
+    isFirstPlus:       isVeloxPlus,
+  };
+
+  Logger.log('Manual sim plan: ' + JSON.stringify(plan));
+
+  // ── 5. Build charging events ───────────────────────────────────────────────
+  var chargingEvents = buildChargingEvents(
+    p.shifts,
+    p.shift_duration,
+    [],
+    0,
+    p.shift_start_hour
+  );
+
+  // ── 6. Run findMaxEfficiency ──────────────────────────────────────────────
+  var targetEff = 100;
+  try {
+    var effSearch  = findMaxEfficiency(plan, chargingEvents, 0, targetEff);
+    var maxEff     = effSearch.maxEfficiency;
+    var simResults = effSearch.finalResults;
+    var effFlag    = effSearch.flag;
+
+    Logger.log('Manual sim result: eff=' + maxEff + '% SOC min=' + Math.round(simResults.min_soc || 0) + '%');
+  } catch(e) {
+    ui.alert('❌ Simulation error:\n' + e.message);
+    Logger.log('Manual sim error: ' + e.message + '\n' + e.stack);
+    return;
+  }
+
+  // ── 7. Calculate work hours ───────────────────────────────────────────────
+  var workHours = calculateWorkHours(
+    chargingEvents, p.shifts, maxEff, p.shift_duration, p.shift_start_hour
+  );
+
+  // ── 8. Determine status ───────────────────────────────────────────────────
+  var isMaxPushed  = effFlag && String(effFlag).includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
+  var overallPassed = simResults.status === 'PASS' && !isMaxPushed;
+  var flags = ['MANUAL_SIM'];
+  if (effFlag) flags.push(effFlag);
+  if (p.notes)  flags.push(p.notes);
+
+  // ── 9. Read SOC from sheet ────────────────────────────────────────────────
+  var socArray;
+  try {
+    socArray = readAllSOC();
+  } catch(e) {
+    socArray = [];
+    Logger.log('readAllSOC error (non-fatal): ' + e.message);
+  }
+
+  // ── 10. Build params object for logging / Portée ──────────────────────────
+  var fullParams = {
+    dealer:                p.dealer,
+    customer:              p.customer,
+    sender:                [p.sender_name, p.sender_email].filter(Boolean).join(' '),
+    sender_name:           p.sender_name,
+    sender_email:          p.sender_email,
+    forklift_manufacturer: p.forklift_manufacturer,
+    forklift_model:        p.forklift_model,
+    voltage:               p.voltage,
+    compartment:           p.compartment,
+    battery_ah:            p.battery_ah,
+    battery_type:          p.battery_type,
+    charger_amps:          p.charger_amps,
+    charger_model:         p.charger_model,
+    shifts:                p.shifts,
+    shift_duration:        p.shift_duration,
+    use_type:              p.use_type,
+    lead_acid_ah:          p.lead_acid_ah,
+    truck_load:            truckLoad,
+    truck_efficiency:      maxEff,
+    work_hours:            workHours.formatted,
+    language:              p.language,
+    shift_start_hour:      p.shift_start_hour,
+    ip54_charger:          p.ip54_charger,
+    heating_option:        p.heating_option,
+    overall_passed:        overallPassed,
+    flags:                 flags,
+    notes:                 '[MANUAL SIM]' + (p.notes ? ' ' + p.notes : ''),
+    scenario:              'MANUAL',
+    email_subject:         'Manual Sim — ' + p.forklift_manufacturer + ' ' + p.forklift_model,
+    _skipSimDb:            true,   // remove this line when ready to write to SIM_DB
+  };
+
+  // ── 11. Log to LOGS sheet ─────────────────────────────────────────────────
+  try {
+    logSimulationResult(fullParams, simResults, 1);
+  } catch(e) {
+    Logger.log('logSimulationResult error (non-fatal): ' + e.message);
+  }
+
+  // ── 12. Build sim entry for Portée ────────────────────────────────────────
+  var simEntry = {
+    passed:         overallPassed,
+    battery_ah:     p.battery_ah,
+    charger_amps:   p.charger_amps,
+    charger_model:  p.charger_model,
+    battery_type:   p.battery_type,
+    battery_label:  p.battery_type + ' ' + p.voltage + 'V ' + p.battery_ah + 'Ah',
+    ebox:           'CUSTOM',
+    max_efficiency: maxEff,
+    work_hours:     workHours.formatted,
+    results:        simResults,
+    soc_over_time:  socArray,
+    chargingEvents: chargingEvents,
+    truck_load:     truckLoad,
+    label:          'Sim 1 — ' + p.battery_ah + 'Ah + ' + p.charger_amps + 'A',
+    scenario:       'MANUAL',
+    flag:           effFlag || null,
+    simNumber:      1,
+    screenshotIndex: 0,
+  };
+
+  // ── 13. Generate Portée PDF ───────────────────────────────────────────────
+  var porteePdf;
+  try {
+    porteePdf = buildHTMLPortee(fullParams, [simEntry], [socArray]);
+  } catch(e) {
+    Logger.log('buildHTMLPortee error (non-fatal): ' + e.message);
+  }
+
+  // ── 14. Capture Data Entry screenshot ────────────────────────────────────
+  var dataPdf;
+  try {
+    Utilities.sleep(3000);
+    dataPdf = capturePdf(fullParams, plan, 1, '');
+  } catch(e) {
+    Logger.log('capturePdf error (non-fatal): ' + e.message);
+  }
+
+  // ── 15. Send review email ─────────────────────────────────────────────────
+  var allPdfs = [];
+  if (porteePdf)  allPdfs.push(porteePdf);
+  if (dataPdf)    allPdfs.push(dataPdf);
+
+  try {
+    sendPipelineReviewEmail(
+      fullParams,
+      [simEntry],
+      flags,
+      chargingEvents,
+      chargingEvents,
+      allPdfs,
+      0,
+      60,
+      false
+    );
+    Logger.log('Manual sim: review email sent');
+  } catch(e) {
+    ui.alert('⚠️ Simulation ran but review email failed:\n' + e.message + '\n\nCheck LOGS sheet for results.');
+    Logger.log('sendPipelineReviewEmail error: ' + e.message);
+    return;
+  }
+
+  // ── 16. Done ──────────────────────────────────────────────────────────────
+  var statusLabel = isMaxPushed ? '⚠️ MAXIMUM ATTEINT' : (overallPassed ? '✅ PASS' : '❌ FAIL');
+  ui.alert(
+    'Manual Simulation Complete',
+    statusLabel + '\n\n' +
+    'Efficiency: ' + maxEff + '%\n' +
+    'Work hours: ' + workHours.formatted + '\n' +
+    'Min SOC: ' + Math.round(simResults.min_soc || 0) + '%\n\n' +
+    'Review email sent. Check LOGS for the full entry.',
+    ui.ButtonSet.OK
+  );
+}

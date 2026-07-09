@@ -1,10 +1,3 @@
-function onOpen() {
-  SpreadsheetApp.getActiveSpreadsheet().addMenu('Velox', [
-    { name: 'Send to Dealer', functionName: 'sendToDealerFromRow' },
-    { name: 'Check New Emails', functionName: 'checkForNewSimulations' },
-    { name: 'Process Queue', functionName: 'checkPendingSimulations' }
-  ]);
-}
 
 const USE_HTML_PDF = true;
 function setApiKey() {
@@ -244,6 +237,7 @@ Rules:
 - shifts must be 1, 2, or 3 — OR return 0 if the email references a previous quote or setup WITHOUT explicitly stating a shift count in the email body (e.g. "same setup as the E30", "même config", "comme avant", "same as before"). If references_previous is true and no shift count is explicitly written, always return shifts: 0. Shifts means distinct crew changes in a day, NOT the number of work periods. A truck that works, then sits, then works again within the same day without a crew change is 1 shift, not 2. A truck that starts at time X, has an idle window mid-day, and ends at time Y with no crew change is always 1 shift. Calculate shift_duration as the total span from first start to last end time (e.g. 6AM to 6PM = 12h shift_duration).
 - shift_duration is 8 by default. Set to 12 if: the email mentions "12 hour shift", "12h shift", "quart de 12 heures", "2x12", OR if the truck's working day spans 12 hours based on stated start and end times (e.g. starts at 6am and ends at 6pm = 12h). Calculate from the first start time to the last end time of the working day when specific times are given. - If the email states total daily hours across multiple shifts (e.g. "running 8-14 hours a day on 2 shifts"), divide total hours by shift count and round up to nearest standard interval (8 or 12) to get shift_duration.
 - If daily work hours are stated as 4 or fewer (e.g. "about 3 hours a day", "roughly 4 hours"), default shifts to 1 unless explicitly stated otherwise.
+'- CRITICAL: If the email states the truck works a specific number of hours out of 24 (e.g. \"21h sur 24h\", \"20 hours out of 24\", \"runs 21 hours a day\", \"20h/24h\", \"works 20 hours per day\"), apply these rules: 21h or more → shifts: 3, shift_duration: 8. 16h to 20h → shifts: 2, shift_duration: 8. 13h to 15h → shifts: 2, shift_duration: 8. 10h to 12h → shifts: 1, shift_duration: 12. 8h or less → shifts: 1, shift_duration: 8. Never put the daily hour count into shift_duration — shift_duration is always 8 or 12.\n' +
 - CRITICAL: If the email or attached Excel mentions annual hours (e.g. "1500 annual hours", "1800 hours per year", "2000h/year"), you MUST apply this rule immediately: 1800h/year or below → shifts: 1, shift_duration: 8. Above 1800h/year → shifts: 0. Never put annual hours only in notes — always infer shifts from it.
 - CRITICAL: If the email mentions "opportunité légère" or "light opportunity charging" (or equivalent phrasing) AND does not explicitly state a shift count, default to shifts: 2, shift_duration: 8. Reasoning: opportunity charging relies on the truck stopping periodically (breaks, lunch) to top up — lead-acid cannot sustain this pattern across 3 shifts, so "légère"/"light" opportunity language never implies 3 shifts. This rule does NOT apply if the email explicitly states a different shift count — explicit statements always override this default.
 - shift_duration is ALWAYS 8 or 12 — never set it to the number of daily work hours. If the truck works 3 hours a day, shift_duration is still 8 and shifts is 1. Daily work hours affect target_efficiency only, not shift_duration.
@@ -406,7 +400,10 @@ function logSimulationResult(params, results, simNumber) {
 
   let status;
   if (params.overall_passed === false) {
-    status = 'FAIL';
+    const isMaxPushed = (params.flags || []).some(function(f) {
+      return String(f).includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
+    });
+    status = isMaxPushed ? 'MAXIMUM' : 'FAIL';
   } else if (results.status === 'PASS' && results.battery_used_pct > 80) {
     status = 'REVIEW';
   } else if (results.status === 'PASS') {
@@ -897,7 +894,7 @@ function selectSimulations(dekaResult, eboxResult, params) {
                    p.charger_amps === dealerPlan24.charger_amps);
         })
       : plans;
-    return { plans: finalPlans24, flags, stopReason: null };
+    return { plans: finalPlans24, flags, stopReason: null, chargers: chargers };
   }
 
   // ── STANDARD PATH (1x8h, 2x8h, 1x12h) ───────────────────────────────────
@@ -1424,10 +1421,30 @@ function findMaxEfficiency(plan, chargingEvents, veloxFlexMaxEff, targetEfficien
       else break;
     }
   } else if (coarseFailAt === startEff || lastPassEff === 0) {
-    lastPassEff     = startEff;
-    lastPassResults = runSingleSim(plan, chargingEvents, startEff);
-    flag            = 'COMBO_FAIBLE_EFF_MIN_' + startEff + 'PCT';
-    Logger.log('  Failed at start — reporting at ' + startEff + '%');
+    // VeloxPlus failed at start efficiency due to SOC — search downward
+    // to find maximum efficiency where SOC stays at or above 20%
+    const isVeloxPlusSearch = String(plan.battery_type || '').toUpperCase().includes('PLUS');
+    let foundBelow = false;
+    if (isVeloxPlusSearch) {
+      for (let eff = startEff - 1; eff >= 10; eff--) {
+        const r = runSingleSim(plan, chargingEvents, eff);
+        Logger.log('  Max-search ' + eff + '% -> SOC min: ' + Math.round(r.min_soc || 0) + '%');
+        if (r.min_soc >= 20) {
+          lastPassEff     = eff;
+          lastPassResults = r;
+          foundBelow      = true;
+          flag            = 'VELOXPLUS_POUSSE_AU_MAXIMUM — ' + eff + '% efficacité max | SOC maintenu à 20%';
+          Logger.log('  VeloxPlus pushed to maximum — efficiency: ' + eff + '%');
+          break;
+        }
+      }
+    }
+    if (!foundBelow) {
+      lastPassEff     = startEff;
+      lastPassResults = runSingleSim(plan, chargingEvents, startEff);
+      flag            = 'COMBO_FAIBLE_EFF_MIN_' + startEff + 'PCT';
+      Logger.log('  Failed at start — no passing efficiency found');
+    }
   }
   if (isVeloxPlus && veloxFlexMaxEff > 0) {
     const required = veloxFlexMaxEff + 15;
@@ -1549,7 +1566,7 @@ const allSimScreenshots = [];
 
   // ── Stated charge floor check ─────────────────────────────────────────────
   const stated = params.stated_charge_minutes_per_shift || 0;
-  const floorMins = params.shift_duration === 12 ? 60 : 45;
+  const floorMins = params.shift_duration === 12 ? 60 : 30;
   if (stated > 0 && stated < floorMins) {
     sendFlagEmail(params,
       'CHARGE_INSUFFISANTE_MIN_' + floorMins + 'MIN',
@@ -1622,11 +1639,23 @@ if (dekaResult.status === 'EXACT_MULTIPLE_DIFFERENT_AH') {
     dekaResult.exact_matches = resolved;
     dekaResult.status = 'EXACT_SINGLE';
   } else {
-    sendFlagEmail(params, 'CONFIRMATION_REQUISE',
-      'Plusieurs Ah: ' + (voltageMatches.length ? voltageMatches : dekaResult.exact_matches)
-        .map(function(m){ return m.ah + 'Ah'; }).join(', ') + '. Compartiment requis.',
-      params.thread, dekaResult.exact_matches);
-    return;
+    // Check if all matches share the same compartment width — if so, pick median Ah
+    var candidates = voltageMatches.length > 0 ? voltageMatches : dekaResult.exact_matches;
+    var uniqueWidths = [...new Set(candidates.map(function(m) { return m.compartment_w; }))];
+    if (uniqueWidths.length === 1) {
+      // All same compartment — pick median Ah and proceed
+      var sorted = candidates.slice().sort(function(a, b) { return a.ah - b.ah; });
+      var median = sorted[Math.floor(sorted.length / 2)];
+      Logger.log('Single compartment, multiple Ah — picking median: ' + median.ah + 'Ah');
+      pipelineFlags.push('AH_MEDIAN_ASSUME — ' + candidates.map(function(m){ return m.ah + 'Ah'; }).join(', ') + ' → retenu: ' + median.ah + 'Ah');
+      dekaResult.exact_matches = [median];
+      dekaResult.status = 'EXACT_SINGLE';
+    } else {
+      sendFlagEmail(params, 'CONFIRMATION_REQUISE',
+        'Plusieurs Ah: ' + candidates.map(function(m){ return m.ah + 'Ah'; }).join(', ') + '. Compartiment requis.',
+        params.thread, dekaResult.exact_matches);
+      return;
+    }
   }
 }
 if (dekaResult.status === 'FUZZY_ONLY') pipelineFlags.push('CORRESPONDANCE_APPROXIMATIVE_DEKA');
@@ -2137,7 +2166,8 @@ allSimScreenshots.push(readAllSOC());
   chargingEvents:      chargingEvents,
   dual_battery:        params.dual_battery || false,
   velox_battery_count: veloxBatteryCount,
-  single_slot_ah:      singleSlotAh
+  single_slot_ah:      singleSlotAh,
+  flag:                effSearch.flag || ''
 };
       passResults.push(simRecord);
       allSimResults.push(simRecord);
@@ -2517,9 +2547,10 @@ Intervention manuelle requise.`;
 function sendPipelineReviewEmail(params, allSimResults, flags, constrainedEvents, standardEvents, allPdfs, statedMins, defaultMins, isDoubleRun) {
   const recipient = 'marc-antoine@veloxpower.com';
 
-  const workingSims = allSimResults.filter(function(s) { return s.passed; });
-  const overallPass = workingSims.length > 0;
-  const statusTag   = overallPass ? '[OK]' : '[ATTENTION]';
+  const workingSims  = allSimResults.filter(function(s) { return s.passed; });
+  const maxSims      = allSimResults.filter(function(s) { return !s.passed && String(s.flag || '').includes('VELOXPLUS_POUSSE_AU_MAXIMUM'); });
+  const overallPass  = workingSims.length > 0 || maxSims.length > 0;
+  const statusTag    = workingSims.length > 0 ? '[OK]' : maxSims.length > 0 ? '[MAXIMUM]' : '[ATTENTION]';
   const shiftDesc   = params.shift_duration === 12 ? params.shifts + 'x12h' : params.shifts + 'x8h';
 
   const subject = statusTag + ' Simulation a reviser — ' +
@@ -2527,7 +2558,12 @@ function sendPipelineReviewEmail(params, allSimResults, flags, constrainedEvents
                   params.forklift_manufacturer + ' ' + params.forklift_model + ' ' + params.voltage + 'V | ' + shiftDesc;
 
   function buildSimBlock(sim) {
-    const statusTxt = sim.results.status === 'PASS' ? 'PASS' : 'FAIL';
+    const isMaxPushed = allSimResults.some(function(s) {
+        return s.simNumber === sim.simNumber &&
+               (s.flag || '').includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
+      });
+      const statusTxt = sim.results.status === 'PASS' ? 'PASS'
+        : isMaxPushed ? '⚠️ MAXIMUM ATTEINT' : 'FAIL';
     const soc1 = sim.results.peak_soc_s1 !== undefined ? '\nSOC max shift 1:     ' + Math.round(sim.results.peak_soc_s1) + '%' : '';
     const soc2 = sim.results.peak_soc_s2 !== undefined ? '\nSOC max shift 2:     ' + Math.round(sim.results.peak_soc_s2) + '%' : '';
     const soc3 = sim.results.peak_soc_s3 !== undefined ? '\nSOC max shift 3:     ' + Math.round(sim.results.peak_soc_s3) + '%' : '';
@@ -2549,7 +2585,7 @@ Ah restant:          ${Math.round(sim.results.remaining_ah)} Ah
 Heures travail:      ${sim.work_hours}
 SOC minimum atteint: ${Math.round(sim.results.min_soc)}%${soc1}${soc2}${soc3}
 % batterie utilisee: ${Math.round(sim.results.battery_used_pct)}%
-Resultat global:     ${sim.passed ? '✅ SUFFISANT' : '❌ INSUFFISANT'}
+Resultat global:     ${sim.passed ? '✅ SUFFISANT' : String(sim.flag || '').includes('VELOXPLUS_POUSSE_AU_MAXIMUM') ? '⚠️ MAXIMUM ATTEINT' : '❌ INSUFFISANT'}
 `;
   }
 
@@ -2619,11 +2655,12 @@ Resultat global:     ${sim.passed ? '✅ SUFFISANT' : '❌ INSUFFISANT'}
   const shiftLabel = params.shift_duration === 12 ? params.shifts + 'x 12h' : params.shifts + ' shifts';
   const flagsText  = flags.length > 0 ? flags.join('\n   ') : 'Aucun';
   const totalViable = allSimResults.filter(function(s) { return s.passed; }).length;
-  const totalNonViable = allSimResults.length - totalViable;
+  const totalMaximum   = allSimResults.filter(function(s){ return !s.passed && String(s.flag||'').includes('VELOXPLUS_POUSSE_AU_MAXIMUM'); }).length;
+const totalNonViable = allSimResults.length - totalViable - totalMaximum;
 
   const body = `Bonjour Marc-Antoine,
 
-${allSimResults.length} simulation(s) — ${totalViable} viable(s), ${totalNonViable} non viable(s).${isDoubleRun ? '\n2 scénarios de charge: Scénario A (' + statedMins + ' min/shift — contrainte client) | Scénario B (' + defaultMins + ' min/shift — horaire standard).' : ''}
+${allSimResults.length} simulation(s) — ${totalViable} viable(s), ${allSimResults.filter(function(s){ return !s.passed && String(s.flag||'').includes('VELOXPLUS_POUSSE_AU_MAXIMUM'); }).length} au maximum, ${totalNonViable} non viable(s).${isDoubleRun ? '\n2 scénarios de charge: Scénario A (' + statedMins + ' min/shift — contrainte client) | Scénario B (' + defaultMins + ' min/shift — horaire standard).' : ''}
 
 [ INFORMATIONS GENERALES ]
 Dealer:            ${params.dealer || 'Non specifie'}
@@ -2683,7 +2720,7 @@ Simulation generee automatiquement — veuillez reviser avant d'envoyer au deale
   }
 
   try {
-    const thread = params.thread || (params.gmail_thread_id ? GmailApp.getThreadById(params.gmail_thread_id) : null);
+    const thread = null; // Always send review as standalone email — never reply in dealer thread
     if (thread) {
       const messages = thread.getMessages();
       // Find last message FROM marc-antoine to reply to — never reply to dealer messages
@@ -4379,24 +4416,4 @@ function processQueuedTrucks() {
     }
   }
   Logger.log('No PENDING items in QUEUE');
-}
-
-function testLindeE100_2x450Ah() {
-  runSimulationPipeline({
-    dealer: 'Elevex',
-    customer: 'Test Validation',
-    sender_name: 'Martin Courtois',
-    forklift_manufacturer: 'LINDE',
-    forklift_model: 'E100',
-    voltage: 80,
-    shifts: 1,
-    shift_duration: 8,
-    use_type: 'average',
-    lead_acid_ah: 1500,
-    battery_ah: 900,      // 2x 450Ah VeloxFlex, combined capacity
-    charger_amps: 400,    // largest available 80V charger — single shared unit
-    language: 'en',
-    shift_start_hour: 7,
-    _skipSimDb: true
-  });
 }
