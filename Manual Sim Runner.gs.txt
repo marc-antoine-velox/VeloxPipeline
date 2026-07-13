@@ -78,20 +78,34 @@ function _createManualSimSheet(ss) {
     [16, 'Charger amps',             '',                    'e.g. 150, 250, 400',                                 'number'],
     [17, 'Charger model',            '',                    'e.g. HFM-G6-6003-48/150 — leave blank if unknown',   'text'],
 
+    // ── Battery & Charger — Combo 2 (optional) ───────────────────────────────
+    [18, '── COMBO 2 (optionnel) ──', '',                  '',                                                    'section'],
+    [19, 'Battery Ah — Combo 2',      0,                   'Laisser à 0 pour ignorer ce combo',                   'number'],
+    [20, 'Battery type — Combo 2',    'VeloxFlex',          'VeloxPlus ou VeloxFlex',                             'dropdown:VeloxPlus,VeloxFlex'],
+    [21, 'Charger amps — Combo 2',    0,                   'e.g. 250, 400',                                       'number'],
+    [22, 'Charger model — Combo 2',   '',                  'e.g. IHF-GE0-64803-80/250E — leave blank if unknown', 'text'],
+
+    // ── Battery & Charger — Combo 2 (optional) ───────────────────────────────
+    [18, '── COMBO 2 (optionnel) ──', '',                  '',                                                    'section'],
+    [19, 'Battery Ah — Combo 2',      0,                   'Laisser à 0 pour ignorer ce combo',                   'number'],
+    [20, 'Battery type — Combo 2',    'VeloxFlex',          'VeloxPlus ou VeloxFlex',                             'dropdown:VeloxPlus,VeloxFlex'],
+    [21, 'Charger amps — Combo 2',    0,                   'e.g. 250, 400',                                       'number'],
+    [22, 'Charger model — Combo 2',   '',                  'e.g. IHF-GE0-64803-80/250E — leave blank if unknown', 'text'],
+
     // ── Simulation parameters ─────────────────────────────────────────────────
-    [18, '── SIMULATION ──',         '',                   '',                                                    'section'],
-    [19, 'Lead-acid Ah ref',         '',                    'Reference lead-acid capacity for truck load calc',    'number'],
-    [20, 'Shifts',                   1,                     '1, 2, or 3',                                         'dropdown:1,2,3'],
-    [21, 'Shift duration (h)',        8,                    '8 or 12',                                             'dropdown:8,12'],
-    [22, 'Use type',                 'average',             'average / heavy / moderate',                          'dropdown:average,heavy,moderate'],
-    [23, 'Shift start hour',          7,                    '0–23 (24h format) — default 7',                      'number'],
-    [24, 'IP54 charger?',            'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
-    [25, 'Heated charger?',          'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
-    [26, 'Charge par quart (min)',    0,                     '0 = schedule auto · ex: 30 = 30 min de lunch seulement', 'number'],
+    [23, '── SIMULATION ──',         '',                   '',                                                    'section'],
+    [24, 'Lead-acid Ah ref',         '',                    'Reference lead-acid capacity for truck load calc',    'number'],
+    [25, 'Shifts',                   1,                     '1, 2, or 3',                                         'dropdown:1,2,3'],
+    [26, 'Shift duration (h)',        8,                    '8 or 12',                                             'dropdown:8,12'],
+    [27, 'Use type',                 'average',             'average / heavy / moderate',                          'dropdown:average,heavy,moderate'],
+    [28, 'Shift start hour',          7,                    '0–23 (24h format) — default 7',                      'number'],
+    [29, 'IP54 charger?',            'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
+    [30, 'Heated charger?',          'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
+    [31, 'Charge par quart (min)',    0,                     '0 = schedule auto · ex: 30 = 30 min de lunch seulement', 'number'],
 
     // ── Notes ─────────────────────────────────────────────────────────────────
-    [27, '── OPTIONAL ──',           '',                   '',                                                    'section'],
-    [28, 'Notes',                    '',                    'Will appear in LOGS — e.g. [CUSTOM BATTERY] EVE 230Ah', 'text'],
+    [32, '── OPTIONAL ──',           '',                   '',                                                    'section'],
+    [33, 'Notes',                    '',                    'Will appear in LOGS — e.g. [CUSTOM BATTERY] EVE 230Ah', 'text'],
   ];
 
   rows.forEach(function(r) {
@@ -169,15 +183,19 @@ function _readManualSimParams() {
     battery_type:          cell(15) || 'VeloxPlus',
     charger_amps:          num(16),
     charger_model:         cell(17),
-    lead_acid_ah:          num(19),
-    shifts:                num(20) || 1,
-    shift_duration:        num(21) || 8,
-    use_type:              cell(22) || 'average',
-    shift_start_hour:      num(23) || 7,
-    ip54_charger:                    cell(24).toUpperCase() === 'YES',
-    heating_option:                  cell(25).toUpperCase() === 'YES',
-    stated_charge_minutes_per_shift: num(26),
-    notes:                           cell(28),
+    battery_ah_2:          num(19),
+    battery_type_2:        cell(20) || 'VeloxFlex',
+    charger_amps_2:        num(21),
+    charger_model_2:       cell(22),
+    lead_acid_ah:          num(24),
+    shifts:                num(25) || 1,
+    shift_duration:        num(26) || 8,
+    use_type:              cell(27) || 'average',
+    shift_start_hour:      num(28) || 7,
+    ip54_charger:                    cell(29).toUpperCase() === 'YES',
+    heating_option:                  cell(30).toUpperCase() === 'YES',
+    stated_charge_minutes_per_shift: num(31),
+    notes:                           cell(33),
   };
 }
 
@@ -202,20 +220,21 @@ function runManualSim() {
   if (!p.forklift_manufacturer) missing.push('Manufacturer');
   if (!p.forklift_model)        missing.push('Model');
   if (!p.voltage)               missing.push('Voltage');
-  if (!p.battery_ah)            missing.push('Battery Ah');
-  if (!p.charger_amps)          missing.push('Charger amps');
+  if (!p.battery_ah)            missing.push('Battery Ah (Combo 1)');
+  if (!p.charger_amps)          missing.push('Charger amps (Combo 1)');
   if (!p.lead_acid_ah)          missing.push('Lead-acid Ah ref');
   if (missing.length > 0) {
     ui.alert('❌ Missing required fields:\n• ' + missing.join('\n• '));
     return;
   }
+  var hasCombo2 = p.battery_ah_2 > 0 && p.charger_amps_2 > 0;
 
   // ── 3. Confirm ────────────────────────────────────────────────────────────
   var confirm = ui.alert(
     'Run Manual Simulation',
     p.forklift_manufacturer + ' ' + p.forklift_model + ' — ' + p.voltage + 'V\n' +
-    'Battery: ' + p.battery_ah + 'Ah ' + p.battery_type + '\n' +
-    'Charger: ' + p.charger_amps + 'A\n' +
+    'Combo 1: ' + p.battery_ah + 'Ah ' + p.battery_type + ' + ' + p.charger_amps + 'A\n' +
+    (hasCombo2 ? 'Combo 2: ' + p.battery_ah_2 + 'Ah ' + p.battery_type_2 + ' + ' + p.charger_amps_2 + 'A\n' : '') +
     'Shifts: ' + p.shifts + ' × ' + p.shift_duration + 'h\n' +
     'Dealer: ' + p.dealer + '\n\n' +
     'Proceed?',
@@ -223,7 +242,7 @@ function runManualSim() {
   );
   if (confirm !== ui.Button.YES) return;
 
-  // ── 4. Build plan object (mirrors selectSimulations output) ───────────────
+  // ── 4. Build plan objects ─────────────────────────────────────────────────
   var divisor    = p.use_type === 'heavy' ? 8 : p.use_type === 'moderate' ? 9 : 10;
   var truckLoad  = Math.round(p.lead_acid_ah * 0.80 / divisor);
   var truckEff   = p.use_type === 'light' ? 50 : 80;
@@ -245,6 +264,26 @@ function runManualSim() {
     isFirstPlus:       isVeloxPlus,
   };
 
+  var plan2 = null;
+  if (hasCombo2) {
+    var isVeloxPlus2 = p.battery_type_2.toUpperCase().includes('PLUS');
+    plan2 = {
+      battery_ah:        p.battery_ah_2,
+      charger_amps:      p.charger_amps_2,
+      charger_model:     p.charger_model_2,
+      battery_type:      p.battery_type_2,
+      truck_load:        truckLoad,
+      truck_efficiency:  truckEff,
+      lead_acid_ah:      p.lead_acid_ah,
+      compartment_w:     0,
+      shifts:            p.shifts,
+      shift_duration:    p.shift_duration,
+      voltage:           p.voltage,
+      isVeloxPlusPlan:   isVeloxPlus2,
+      isFirstPlus:       false,
+    };
+  }
+
   Logger.log('Manual sim plan: ' + JSON.stringify(plan));
 
   // ── 5. Build charging events ───────────────────────────────────────────────
@@ -252,47 +291,51 @@ function runManualSim() {
     p.shifts,
     p.shift_duration,
     [],
-    0,
+    p.stated_charge_minutes_per_shift || 0,
     p.shift_start_hour
   );
 
-  // ── 6. Run findMaxEfficiency ──────────────────────────────────────────────
+  // ── 6. Run simulations ────────────────────────────────────────────────────
   var targetEff = 100;
-  try {
-    var effSearch  = findMaxEfficiency(plan, chargingEvents, 0, targetEff);
-    var maxEff     = effSearch.maxEfficiency;
-    var simResults = effSearch.finalResults;
-    var effFlag    = effSearch.flag;
+  var allSimResults = [];
 
-    Logger.log('Manual sim result: eff=' + maxEff + '% SOC min=' + Math.round(simResults.min_soc || 0) + '%');
-  } catch(e) {
-    ui.alert('❌ Simulation error:\n' + e.message);
-    Logger.log('Manual sim error: ' + e.message + '\n' + e.stack);
-    return;
+  function runOnePlan(planObj, simNum) {
+    try {
+      var effSearch  = findMaxEfficiency(planObj, chargingEvents, 0, targetEff);
+      var maxEff     = effSearch.maxEfficiency;
+      var simRes     = effSearch.finalResults;
+      var effFlag    = effSearch.flag;
+      var wh         = calculateWorkHours(chargingEvents, p.shifts, maxEff, p.shift_duration, p.shift_start_hour);
+      var isMax      = effFlag && String(effFlag).includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
+      var passed     = simRes.status === 'PASS' && !isMax;
+      var soc        = [];
+      try { soc = readAllSOC(); } catch(e2) {}
+      try { logSimulationResult(fullParams, simRes, simNum); } catch(e2) {}
+      Logger.log('Combo ' + simNum + ': eff=' + maxEff + '% work=' + wh.formatted + ' pass=' + passed);
+      return {
+        passed: passed, battery_ah: planObj.battery_ah, charger_amps: planObj.charger_amps,
+        charger_model: planObj.charger_model, battery_type: planObj.battery_type,
+        battery_label: planObj.battery_type + ' ' + p.voltage + 'V ' + planObj.battery_ah + 'Ah',
+        ebox: 'CUSTOM', max_efficiency: maxEff, work_hours: wh.formatted,
+        results: simRes, soc_over_time: soc, chargingEvents: chargingEvents,
+        truck_load: truckLoad,
+        label: 'Sim ' + simNum + ' — ' + planObj.battery_ah + 'Ah + ' + planObj.charger_amps + 'A',
+        scenario: 'MANUAL', flag: effFlag || null, simNumber: simNum, screenshotIndex: simNum - 1,
+      };
+    } catch(e) {
+      ui.alert('❌ Simulation error (Combo ' + simNum + '):\n' + e.message);
+      Logger.log('Manual sim error combo ' + simNum + ': ' + e.message);
+      return null;
+    }
   }
 
-  // ── 7. Calculate work hours ───────────────────────────────────────────────
-  var workHours = calculateWorkHours(
-    chargingEvents, p.shifts, maxEff, p.shift_duration, p.shift_start_hour
-  );
-
-  // ── 8. Determine status ───────────────────────────────────────────────────
-  var isMaxPushed  = effFlag && String(effFlag).includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
-  var overallPassed = simResults.status === 'PASS' && !isMaxPushed;
+  // Need fullParams defined before runOnePlan is called — define it now
+  var isMaxPushed = false; // placeholder, updated per sim below
+  var overallPassed = false;
   var flags = ['MANUAL_SIM'];
-  if (effFlag) flags.push(effFlag);
-  if (p.notes)  flags.push(p.notes);
+  if (p.notes) flags.push(p.notes);
 
-  // ── 9. Read SOC from sheet ────────────────────────────────────────────────
-  var socArray;
-  try {
-    socArray = readAllSOC();
-  } catch(e) {
-    socArray = [];
-    Logger.log('readAllSOC error (non-fatal): ' + e.message);
-  }
-
-  // ── 10. Build params object for logging / Portée ──────────────────────────
+  // ── 9. Build params object for logging / Portée ───────────────────────────
   var fullParams = {
     dealer:                p.dealer,
     customer:              p.customer,
@@ -327,39 +370,24 @@ function runManualSim() {
     _skipSimDb:            true,   // remove this line when ready to write to SIM_DB
   };
 
-  // ── 11. Log to LOGS sheet ─────────────────────────────────────────────────
-  try {
-    logSimulationResult(fullParams, simResults, 1);
-  } catch(e) {
-    Logger.log('logSimulationResult error (non-fatal): ' + e.message);
+  // ── 10. Run simulations ───────────────────────────────────────────────────
+  var sim1 = runOnePlan(plan, 1);
+  if (!sim1) return;
+  allSimResults.push(sim1);
+
+  if (hasCombo2) {
+    var sim2 = runOnePlan(plan2, 2);
+    if (sim2) allSimResults.push(sim2);
   }
 
-  // ── 12. Build sim entry for Portée ────────────────────────────────────────
-  var simEntry = {
-    passed:         overallPassed,
-    battery_ah:     p.battery_ah,
-    charger_amps:   p.charger_amps,
-    charger_model:  p.charger_model,
-    battery_type:   p.battery_type,
-    battery_label:  p.battery_type + ' ' + p.voltage + 'V ' + p.battery_ah + 'Ah',
-    ebox:           'CUSTOM',
-    max_efficiency: maxEff,
-    work_hours:     workHours.formatted,
-    results:        simResults,
-    soc_over_time:  socArray,
-    chargingEvents: chargingEvents,
-    truck_load:     truckLoad,
-    label:          'Sim 1 — ' + p.battery_ah + 'Ah + ' + p.charger_amps + 'A',
-    scenario:       'MANUAL',
-    flag:           effFlag || null,
-    simNumber:      1,
-    screenshotIndex: 0,
-  };
+  // Determine overall status from all sims
+  var anyViable = allSimResults.filter(function(s) { return s.passed; }).length;
 
-  // ── 13. Generate Portée PDF ───────────────────────────────────────────────
+  // ── 11. Generate Portée PDF ───────────────────────────────────────────────
   var porteePdf;
   try {
-    porteePdf = buildHTMLPortee(fullParams, [simEntry], [socArray]);
+    var socArrays = allSimResults.map(function(s) { return s.soc_over_time; });
+    porteePdf = buildHTMLPortee(fullParams, allSimResults, socArrays);
   } catch(e) {
     Logger.log('buildHTMLPortee error (non-fatal): ' + e.message);
   }
@@ -381,7 +409,7 @@ function runManualSim() {
   try {
     sendPipelineReviewEmail(
       fullParams,
-      [simEntry],
+      allSimResults,
       flags,
       chargingEvents,
       chargingEvents,
@@ -398,14 +426,14 @@ function runManualSim() {
   }
 
   // ── 16. Done ──────────────────────────────────────────────────────────────
-  var statusLabel = isMaxPushed ? '⚠️ MAXIMUM ATTEINT' : (overallPassed ? '✅ PASS' : '❌ FAIL');
+  var summary = allSimResults.map(function(s) {
+    return (s.passed ? '✅' : '❌') + ' Combo ' + s.simNumber + ': ' +
+      s.battery_ah + 'Ah + ' + s.charger_amps + 'A — ' +
+      s.max_efficiency + '% · ' + s.work_hours;
+  }).join('\n');
   ui.alert(
     'Manual Simulation Complete',
-    statusLabel + '\n\n' +
-    'Efficiency: ' + maxEff + '%\n' +
-    'Work hours: ' + workHours.formatted + '\n' +
-    'Min SOC: ' + Math.round(simResults.min_soc || 0) + '%\n\n' +
-    'Review email sent. Check LOGS for the full entry.',
+    summary + '\n\nReview email sent. Check LOGS for the full entries.',
     ui.ButtonSet.OK
   );
 }
