@@ -87,10 +87,11 @@ function _createManualSimSheet(ss) {
     [23, 'Shift start hour',          7,                    '0–23 (24h format) — default 7',                      'number'],
     [24, 'IP54 charger?',            'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
     [25, 'Heated charger?',          'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
+    [26, 'Charge par quart (min)',    0,                     '0 = schedule auto · ex: 30 = 30 min de lunch seulement', 'number'],
 
     // ── Notes ─────────────────────────────────────────────────────────────────
-    [26, '── OPTIONAL ──',           '',                   '',                                                    'section'],
-    [27, 'Notes',                    '',                    'Will appear in LOGS — e.g. [CUSTOM BATTERY] EVE 230Ah', 'text'],
+    [27, '── OPTIONAL ──',           '',                   '',                                                    'section'],
+    [28, 'Notes',                    '',                    'Will appear in LOGS — e.g. [CUSTOM BATTERY] EVE 230Ah', 'text'],
   ];
 
   rows.forEach(function(r) {
@@ -173,9 +174,10 @@ function _readManualSimParams() {
     shift_duration:        num(21) || 8,
     use_type:              cell(22) || 'average',
     shift_start_hour:      num(23) || 7,
-    ip54_charger:          cell(24).toUpperCase() === 'YES',
-    heating_option:        cell(25).toUpperCase() === 'YES',
-    notes:                 cell(27),
+    ip54_charger:                    cell(24).toUpperCase() === 'YES',
+    heating_option:                  cell(25).toUpperCase() === 'YES',
+    stated_charge_minutes_per_shift: num(26),
+    notes:                           cell(28),
   };
 }
 
@@ -313,8 +315,9 @@ function runManualSim() {
     truck_efficiency:      maxEff,
     work_hours:            workHours.formatted,
     language:              p.language,
-    shift_start_hour:      p.shift_start_hour,
-    ip54_charger:          p.ip54_charger,
+    shift_start_hour:                p.shift_start_hour,
+    ip54_charger:                    p.ip54_charger,
+    stated_charge_minutes_per_shift: p.stated_charge_minutes_per_shift || 0,
     heating_option:        p.heating_option,
     overall_passed:        overallPassed,
     flags:                 flags,
