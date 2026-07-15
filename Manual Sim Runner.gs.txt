@@ -329,10 +329,19 @@ function runManualSim() {
       var passed     = simRes.status === 'PASS' && !isMax;
       var soc        = [];
       try { soc = readAllSOC(); } catch(e2) {}
-      try { logSimulationResult(fullParams, simRes, simNum); } catch(e2) {}
+      try {
+        var logParams = Object.assign({}, fullParams, {
+          battery_ah:     planObj.battery_ah,
+          charger_amps:   planObj.charger_amps,
+          charger_model:  planObj.charger_model,
+          battery_type:   planObj.battery_type,
+          overall_passed: passed,
+        });
+        logSimulationResult(logParams, simRes, simNum);
+      } catch(e2) {}
       Logger.log('Combo ' + simNum + ': eff=' + maxEff + '% work=' + wh.formatted + ' pass=' + passed);
       return {
-        passed: passed, battery_ah: planObj.battery_ah, charger_amps: planObj.charger_amps,
+        passed: passed, overall_passed: passed, battery_ah: planObj.battery_ah, charger_amps: planObj.charger_amps,
         charger_model: planObj.charger_model, battery_type: planObj.battery_type,
         battery_label: planObj.battery_type + ' ' + p.voltage + 'V ' + planObj.battery_ah + 'Ah',
         ebox: eboxLbl || 'CUSTOM', max_efficiency: maxEff, work_hours: wh.formatted,
@@ -386,7 +395,6 @@ function runManualSim() {
     notes:                 '[MANUAL SIM]' + (p.notes ? ' ' + p.notes : ''),
     scenario:              'MANUAL',
     email_subject:         'Manual Sim — ' + p.forklift_manufacturer + ' ' + p.forklift_model,
-    _skipSimDb:            true,   // remove this line when ready to write to SIM_DB
   };
 
   // ── 10. Run simulations ───────────────────────────────────────────────────
