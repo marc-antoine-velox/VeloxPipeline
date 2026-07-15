@@ -433,20 +433,34 @@ function runManualSim() {
   if (porteePdf)  allPdfs.push(porteePdf);
   if (dataPdf)    allPdfs.push(dataPdf);
 
+  // ── Write to SIM_DB ────────────────────────────────────────────────────────
   try {
-    // ── Write to SIM_DB ──────────────────────────────────────────────────────
-  try {
-    var pdfId = porteePdf ? porteePdf.getId() : '';
+    var pdfId = '';
+    try {
+      var logsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('LOGS');
+      var lastRow   = logsSheet.getLastRow();
+      var heads     = logsSheet.getRange(1, 1, 1, logsSheet.getLastColumn()).getValues()[0];
+      var pdfCol    = heads.indexOf('Portée PDF ID') + 1;
+      if (pdfCol > 0 && lastRow > 1) pdfId = logsSheet.getRange(lastRow, pdfCol).getValue() || '';
+    } catch(e2) { Logger.log('PDF ID read error: ' + e2.message); }
     writeToSimDB(fullParams, allSimResults[0].results, pdfId);
   } catch(e) {
     Logger.log('writeToSimDB error (non-fatal): ' + e.message);
   }
+
+  // ── Send review email ──────────────────────────────────────────────────────
+  try {
+    sendPipelineReviewEmail(
+      fullParams,
+      allSimResults,
+      flags,
       chargingEvents,
       chargingEvents,
       allPdfs,
       0,
       60,
-      false;
+      false
+    );
     Logger.log('Manual sim: review email sent');
   } catch(e) {
     ui.alert('⚠️ Simulation ran but review email failed:\n' + e.message + '\n\nCheck LOGS sheet for results.');
