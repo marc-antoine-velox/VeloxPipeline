@@ -67,7 +67,9 @@ function buildHTMLPortee(params, allSimResults, allSimScreenshots) {
       const lastRow   = logsSheet.getLastRow();
       const heads     = logsSheet.getRange(1, 1, 1, logsSheet.getLastColumn()).getValues()[0];
       const col       = heads.indexOf('Portée PDF ID') + 1;
+      const linkCol   = heads.indexOf('Portée PDF LINK') + 1;
       if (col > 0 && lastRow > 1) logsSheet.getRange(lastRow, col).setValue(pdfFile.getId());
+      if (linkCol > 0 && lastRow > 1) logsSheet.getRange(lastRow, linkCol).setFormula('=HYPERLINK("https://drive.google.com/file/d/' + pdfFile.getId() + '/view","📄 Ouvrir")');
     } catch(e) { Logger.log('LOGS write error: ' + e.message); }
 
     return pdfBlob;
@@ -277,7 +279,7 @@ const pillLine3    = modelDisplay + ' ' + voltage + 'V – ' + shiftSuffix;
     // ── CLIENT LOGO — top left (only when client logo available)
     (clientLogoB64 ?
       '<img src="data:image/png;base64,' + clientLogoB64 + '" ' +
-      'style="position:absolute;left:85px;top:15px;width:80px;height:60px;object-fit:contain;z-index:5;">'
+      'style="position:absolute;left:85px;top:15px;width:120px;height:60px;object-fit:contain;z-index:5;">'
     : '') +
 
     // ── DEALER LOGO — original size when no client, smaller centered when client present

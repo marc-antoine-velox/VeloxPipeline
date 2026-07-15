@@ -443,14 +443,15 @@ function logSimulationResult(params, results, simNumber) {
     params.forklift_class || '',              // Y - Classe Chariot
     params.special_equipment || '',           // Z - Équip. Spécial
     notes.trim(),                             // AA - Notes/Flags
-    params.email_subject || '',               // AB - Sujet Email
-    params.scenario || 'STANDARD',            // AC - Scénario
-    params.language || '',                    // AD - Langue courriel
+    params.email_subject         || '',               // AB - Sujet Email
+    params.scenario              || 'STANDARD',       // AC - Scénario
+    params.language              || '',               // AD - Langue courriel
     '',                                       // AE - (reserved)
-    _buildGroupingKey(params)                 // AF - Grouping Key
+    _buildGroupingKey(params),                // AF - Grouping Key
+    '',                                       // AG - Portée PDF LINK (written separately after PDF is saved)
   ];
 
-  logSheet.getRange(nextRow, 1, 1, 32).setValues([row]);
+  logSheet.getRange(nextRow, 1, 1, 33).setValues([row]);
   Logger.log('Logged row ' + nextRow + ' | Sim ' + (simNumber || 1) + ' | ' + (params.scenario || 'STANDARD'));
 }
 
