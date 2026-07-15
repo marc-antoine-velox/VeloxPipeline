@@ -434,17 +434,19 @@ function runManualSim() {
   if (dataPdf)    allPdfs.push(dataPdf);
 
   try {
-    sendPipelineReviewEmail(
-      fullParams,
-      allSimResults,
-      flags,
+    // ── Write to SIM_DB ──────────────────────────────────────────────────────
+  try {
+    var pdfId = porteePdf ? porteePdf.getId() : '';
+    writeToSimDB(fullParams, allSimResults[0].results, pdfId);
+  } catch(e) {
+    Logger.log('writeToSimDB error (non-fatal): ' + e.message);
+  }
       chargingEvents,
       chargingEvents,
       allPdfs,
       0,
       60,
-      false
-    );
+      false;
     Logger.log('Manual sim: review email sent');
   } catch(e) {
     ui.alert('⚠️ Simulation ran but review email failed:\n' + e.message + '\n\nCheck LOGS sheet for results.');
