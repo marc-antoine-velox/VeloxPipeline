@@ -1231,6 +1231,14 @@ function buildConstrainedChargingEvents(shifts, shiftDuration, minutesPerShift, 
   const dur = shiftDuration || 8;
 
   if (shifts === 1 && dur === 8) {
+    if (minutesPerShift === 30) {
+      // 30 min: lunch only — no break
+      return [
+        { start_day: 1, start_time: '12:00 AM', end_day: 1, end_time: '7:00 AM',  label: 'Pre-Shift Charge' },
+        { start_day: 1, start_time: '12:00 PM', end_day: 1, end_time: '12:30 PM', label: 'S1 Lunch' },
+        { start_day: 1, start_time: '3:00 PM',  end_day: 1, end_time: '11:59 PM', label: 'Overnight Charge' }
+      ];
+    }
     // 45 min: lunch + 1 break
     return [
       { start_day: 1, start_time: '12:00 AM', end_day: 1, end_time: '7:00 AM',  label: 'Pre-Shift Charge' },
@@ -4267,8 +4275,10 @@ const today = now.toLocaleString('en-CA', { timeZone: 'America/Toronto' }).repla
       params.gmail_thread_id       || '',  // AB - Gmail_Thread_ID
       params.email_subject         || '',  // AC - Email_Subject
       porteePdfId                  || '',  // AD - Portée_PDF_ID
-      ''                                   // AE - Notes
+      '',                                  // AE - Note
+      porteePdfId ? '=HYPERLINK("https://drive.google.com/file/d/' + porteePdfId + '/view","📄 Ouvrir")' : ''  // AF - Lien Portée
     ];
+
 
     // Dedup key — tighter than before
     const dedupKey = [
