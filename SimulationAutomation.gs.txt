@@ -2973,6 +2973,22 @@ params.email_subject   = subject;
       // ── Dealer name normalization ─────────────────────────────────────
       const knownDealersRetry = getKnownDealers();
       params.dealer = normalizeDealer(params.dealer, knownDealersRetry);
+      if (!params.dealer || params.dealer.trim() === '') {
+        const domain1 = (params.sender_email || '').split('@')[1] || '';
+        const DOMAIN_MAP1 = {
+          'leavittig.com': 'Leavitt Machinery', 'leavitt.com': 'Leavitt Machinery',
+          'elevex.ca':     'Elevex',             'wajax.com':   'Wajax',
+          'toromont.com':  'Toromont',           'geci.ca':     'GECI',
+          'battelec.com':  'Battelec',
+        };
+        const domainKey1 = Object.keys(DOMAIN_MAP1).find(function(k) {
+          return domain1.toLowerCase().includes(k.split('.')[0]);
+        });
+        if (domainKey1) {
+          params.dealer = DOMAIN_MAP1[domainKey1];
+          Logger.log('Dealer inferred from sender domain: ' + domain1 + ' → ' + params.dealer);
+        }
+      }
 
       if (!params.voltage || params.voltage === 0) {
   var prescanned = _prescanVoltage(emailText);
@@ -3515,7 +3531,23 @@ params.email_subject   = subject;
         params.thread          = thread;
 
         // ── Dealer name normalization ─────────────────────────────────────
-        params.dealer = normalizeDealer(params.dealer, knownDealers);
+params.dealer = normalizeDealer(params.dealer, knownDealers);
+        if (!params.dealer || params.dealer.trim() === '') {
+          const domain2 = (params.sender_email || '').split('@')[1] || '';
+          const DOMAIN_MAP2 = {
+            'leavittig.com': 'Leavitt Machinery', 'leavitt.com': 'Leavitt Machinery',
+            'elevex.ca':     'Elevex',             'wajax.com':   'Wajax',
+            'toromont.com':  'Toromont',           'geci.ca':     'GECI',
+            'battelec.com':  'Battelec',
+          };
+          const domainKey2 = Object.keys(DOMAIN_MAP2).find(function(k) {
+            return domain2.toLowerCase().includes(k.split('.')[0]);
+          });
+          if (domainKey2) {
+            params.dealer = DOMAIN_MAP2[domainKey2];
+            Logger.log('Dealer inferred from sender domain: ' + domain2 + ' → ' + params.dealer);
+          }
+        }
 
         // ── Multi-truck routing ───────────────────────────────────────────
         if (params.trucks && params.trucks.length > 1) {
