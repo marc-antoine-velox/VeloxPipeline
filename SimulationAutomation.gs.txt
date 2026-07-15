@@ -1781,11 +1781,17 @@ if (!params.voltage || params.voltage === 0) {
         }), simResults, 1);
 
         // ── 5. Generate Portée PDF — now writes PDF ID to the correct last row ──
-        const porteePdfBlob = buildHTMLPortee(
-          porteeParams,
-          [customSimEntry],
-          [customSOC]
-        );
+        let porteePdfBlob = null;
+        for (var _attempt1 = 1; _attempt1 <= 3; _attempt1++) {
+          try {
+            porteePdfBlob = buildHTMLPortee(porteeParams, [customSimEntry], [customSOC]);
+            if (porteePdfBlob) break;
+            Logger.log('buildHTMLPortee attempt ' + _attempt1 + '/3 returned null — retrying...');
+          } catch(_e1) {
+            Logger.log('buildHTMLPortee attempt ' + _attempt1 + '/3 error: ' + _e1.message);
+          }
+          if (_attempt1 < 3) Utilities.sleep(15000);
+        }
 
         // ── 6. Take Data Entry screenshot ────────────────────────────────────
         // Sheet already has max efficiency sim from findMaxEfficiency — just capture
@@ -2414,9 +2420,21 @@ allSimScreenshots.push(readAllSOC());
   }
 
   // Generate Portée PDF and prepend to attachments
-const porteePdfBlob = USE_HTML_PDF
-  ? buildHTMLPortee(params, allSimResults, allSimScreenshots)
-  : buildPorteePDFBlob(params, allSimResults, allSimScreenshots);
+let porteePdfBlob = null;
+if (USE_HTML_PDF) {
+  for (var _attempt2 = 1; _attempt2 <= 3; _attempt2++) {
+    try {
+      porteePdfBlob = buildHTMLPortee(params, allSimResults, allSimScreenshots);
+      if (porteePdfBlob) break;
+      Logger.log('buildHTMLPortee attempt ' + _attempt2 + '/3 returned null — retrying...');
+    } catch(_e2) {
+      Logger.log('buildHTMLPortee attempt ' + _attempt2 + '/3 error: ' + _e2.message);
+    }
+    if (_attempt2 < 3) Utilities.sleep(15000);
+  }
+} else {
+  porteePdfBlob = buildPorteePDFBlob(params, allSimResults, allSimScreenshots);
+}
 if (porteePdfBlob) allPdfs.unshift(porteePdfBlob);
 
 Logger.log('Sending email — ' + allPdfs.length + ' PDFs...');

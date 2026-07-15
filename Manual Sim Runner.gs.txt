@@ -412,12 +412,18 @@ function runManualSim() {
 
   // ── 11. Generate Portée PDF ───────────────────────────────────────────────
   var porteePdf;
-  try {
-    var socArrays = allSimResults.map(function(s) { return s.soc_over_time; });
-    porteePdf = buildHTMLPortee(fullParams, allSimResults, socArrays);
-  } catch(e) {
-    Logger.log('buildHTMLPortee error (non-fatal): ' + e.message);
+  var socArrays = allSimResults.map(function(s) { return s.soc_over_time; });
+  for (var attempt = 1; attempt <= 3; attempt++) {
+    try {
+      porteePdf = buildHTMLPortee(fullParams, allSimResults, socArrays);
+      if (porteePdf) break;
+      Logger.log('buildHTMLPortee attempt ' + attempt + '/3 returned null — retrying...');
+    } catch(e) {
+      Logger.log('buildHTMLPortee attempt ' + attempt + '/3 error: ' + e.message);
+    }
+    if (attempt < 3) Utilities.sleep(15000); // wait 15s before retry
   }
+  if (!porteePdf) Logger.log('buildHTMLPortee failed after 3 attempts — continuing without Portée');
 
   // ── 14. Capture Data Entry screenshot ────────────────────────────────────
   var dataPdf;
