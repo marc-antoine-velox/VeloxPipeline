@@ -78,14 +78,7 @@ function _createManualSimSheet(ss) {
     [16, 'Charger amps',             '',                    'e.g. 150, 250, 400',                                 'number'],
     [17, 'Charger model',            '',                    'e.g. HFM-G6-6003-48/150 — leave blank if unknown',   'text'],
 
-    // ── Battery & Charger — Combo 2 (optional) ───────────────────────────────
-    [18, '── COMBO 2 (optionnel) ──', '',                  '',                                                    'section'],
-    [19, 'Battery Ah — Combo 2',      0,                   'Laisser à 0 pour ignorer ce combo',                   'number'],
-    [20, 'Battery type — Combo 2',    'VeloxFlex',          'VeloxPlus ou VeloxFlex',                             'dropdown:VeloxPlus,VeloxFlex'],
-    [21, 'Charger amps — Combo 2',    0,                   'e.g. 250, 400',                                       'number'],
-    [22, 'Charger model — Combo 2',   '',                  'e.g. IHF-GE0-64803-80/250E — leave blank if unknown', 'text'],
-
-    // ── Battery & Charger — Combo 2 (optional) ───────────────────────────────
+        // ── Battery & Charger — Combo 2 (optional) ───────────────────────────────
     [18, '── COMBO 2 (optionnel) ──', '',                  '',                                                    'section'],
     [19, 'Battery Ah — Combo 2',      0,                   'Laisser à 0 pour ignorer ce combo',                   'number'],
     [20, 'Battery type — Combo 2',    'VeloxFlex',          'VeloxPlus ou VeloxFlex',                             'dropdown:VeloxPlus,VeloxFlex'],
@@ -264,6 +257,32 @@ function runManualSim() {
     isFirstPlus:       isVeloxPlus,
   };
 
+// ── Ebox verification (when compartment is provided) ──────────────────────
+  var eboxLabel = 'CUSTOM';
+  var eboxLabel2 = 'CUSTOM';
+  if (p.compartment) {
+    var compParts = p.compartment.replace(/,/g, '.').split(/\s*x\s*/i);
+    var compL = parseFloat(compParts[0]) || 0;
+    var compW = parseFloat(compParts[1]) || 0;
+    var compH = parseFloat(compParts[2]) || 0;
+    if (compW > 0) {
+      var eboxResult = verifyEbox(compW, p.voltage, compL, compH);
+      Logger.log('Ebox verification: ' + JSON.stringify(eboxResult.fitting_eboxes));
+      // Find which ebox fits combo 1
+      var match1 = (eboxResult.compatible_batteries || []).find(function(b) {
+        return b.ah === p.battery_ah && b.voltage === p.voltage;
+      });
+      eboxLabel = match1 ? match1.ebox : (eboxResult.fitting_eboxes.length > 0 ? eboxResult.fitting_eboxes[0] : 'NO FIT');
+      // Find which ebox fits combo 2
+      if (hasCombo2) {
+        var match2 = (eboxResult.compatible_batteries || []).find(function(b) {
+          return b.ah === p.battery_ah_2 && b.voltage === p.voltage;
+        });
+        eboxLabel2 = match2 ? match2.ebox : (eboxResult.fitting_eboxes.length > 0 ? eboxResult.fitting_eboxes[0] : 'NO FIT');
+      }
+    }
+  }
+
   var plan2 = null;
   if (hasCombo2) {
     var isVeloxPlus2 = p.battery_type_2.toUpperCase().includes('PLUS');
@@ -299,7 +318,7 @@ function runManualSim() {
   var targetEff = 100;
   var allSimResults = [];
 
-  function runOnePlan(planObj, simNum) {
+  function runOnePlan(planObj, simNum, eboxLbl) {
     try {
       var effSearch  = findMaxEfficiency(planObj, chargingEvents, 0, targetEff);
       var maxEff     = effSearch.maxEfficiency;
@@ -316,7 +335,7 @@ function runManualSim() {
         passed: passed, battery_ah: planObj.battery_ah, charger_amps: planObj.charger_amps,
         charger_model: planObj.charger_model, battery_type: planObj.battery_type,
         battery_label: planObj.battery_type + ' ' + p.voltage + 'V ' + planObj.battery_ah + 'Ah',
-        ebox: 'CUSTOM', max_efficiency: maxEff, work_hours: wh.formatted,
+        ebox: eboxLbl || 'CUSTOM', max_efficiency: maxEff, work_hours: wh.formatted,
         results: simRes, soc_over_time: soc, chargingEvents: chargingEvents,
         truck_load: truckLoad,
         label: 'Sim ' + simNum + ' — ' + planObj.battery_ah + 'Ah + ' + planObj.charger_amps + 'A',
@@ -355,8 +374,8 @@ function runManualSim() {
     use_type:              p.use_type,
     lead_acid_ah:          p.lead_acid_ah,
     truck_load:            truckLoad,
-    truck_efficiency:      maxEff,
-    work_hours:            workHours.formatted,
+    truck_efficiency:      allSimResults.length > 0 ? allSimResults[0].max_efficiency : 0,
+    work_hours:            allSimResults.length > 0 ? allSimResults[0].work_hours : '',
     language:              p.language,
     shift_start_hour:                p.shift_start_hour,
     ip54_charger:                    p.ip54_charger,
@@ -371,12 +390,12 @@ function runManualSim() {
   };
 
   // ── 10. Run simulations ───────────────────────────────────────────────────
-  var sim1 = runOnePlan(plan, 1);
+  var sim1 = runOnePlan(plan, 1, eboxLabel);
   if (!sim1) return;
   allSimResults.push(sim1);
 
   if (hasCombo2) {
-    var sim2 = runOnePlan(plan2, 2);
+    var sim2 = runOnePlan(plan2, 2, eboxLabel2);
     if (sim2) allSimResults.push(sim2);
   }
 
