@@ -4007,13 +4007,13 @@ function sendToDealerFromRow() {
       if (manualSheet) {
         var threadUrl = String(manualSheet.getRange(39, 2).getValue() || '').trim();
         if (threadUrl) {
-          var msgIdMatch = threadUrl.match(/#[^/]+\/([A-Za-z0-9]+)$/);
-          if (msgIdMatch) {
-            try {
-              var msg = GmailApp.getMessageById(msgIdMatch[1]);
-              if (msg) thread = msg.getThread();
-            } catch(e2) {
-              try { thread = GmailApp.getThreadById(msgIdMatch[1]); } catch(e3) {}
+          var rawThread = threadUrl.trim();
+          if (/^\d+$/.test(rawThread)) {
+            try { thread = GmailApp.getThreadById(rawThread); } catch(e2) {}
+          } else {
+            var msgIdMatch = rawThread.match(/#[^/]+\/([A-Za-z0-9]+)$/);
+            if (msgIdMatch) {
+              try { thread = GmailApp.getThreadById(msgIdMatch[1]); } catch(e2) {}
             }
           }
         }
