@@ -4021,6 +4021,7 @@ function sendToDealerFromRow() {
     } catch(e) { Logger.log('Manual sim thread lookup error: ' + e.message); }
   }
 
+var messages = thread ? thread.getMessages() : [];
 var externalAddresses = [];
 var seenAddresses = {};
 
@@ -4062,7 +4063,14 @@ messages.forEach(function(msg) {
 
 // ── Build To/CC based on who forwarded ───────────────────────────────────
 var toList, ccList;
-if (forwardedByQuote) {
+if (isManualSim && messages.length === 0) {
+  // Manual sim with no thread — use contact email from Manual Sim sheet
+  try {
+    var manualSimSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Manual Sim');
+    toList = manualSimSheet ? String(manualSimSheet.getRange(6, 2).getValue() || '').trim() : '';
+  } catch(e) { toList = ''; }
+  ccList = 'quote@veloxpower.com';
+} else if (forwardedByQuote) {
   // Quote forwarded — reply to quote only, no dealer
   toList = 'quote@veloxpower.com';
   ccList = '';
