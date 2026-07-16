@@ -3810,12 +3810,14 @@ function sendToDealerFromRow() {
     if (rowStatus !== 'PASS' && rowStatus !== 'REVIEW' && rowStatus !== 'MAXIMUM') continue;
 
     if (isManualSim) {
-      // Manual sim grouping: same dealer + today + MANUAL SIM flag
-      var rowNotes  = String(allData[i][notesCol] || '').toUpperCase();
-      var rowDealer = String(allData[i][dealerCol] || '').trim().toLowerCase();
-      var rowDate   = allData[i][dateCol] ? new Date(allData[i][dateCol]).toLocaleDateString('en-CA') : '';
-      var selDealer = dealer.trim().toLowerCase();
-      if (rowNotes.includes('MANUAL SIM') && rowDealer === selDealer && rowDate === todayStr) {
+      // Manual sim grouping: same dealer + today + MANUAL SIM flag + same sender
+      var rowNotes   = String(allData[i][notesCol] || '').toUpperCase();
+      var rowDealer  = String(allData[i][dealerCol] || '').trim().toLowerCase();
+      var rowDate    = allData[i][dateCol] ? new Date(allData[i][dateCol]).toLocaleDateString('en-CA') : '';
+      var rowSender  = String(allData[i][heads.indexOf('Expéditeur')] || '').toLowerCase();
+      var selDealer  = dealer.trim().toLowerCase();
+      var selSender  = col('Expéditeur').toLowerCase();
+      if (rowNotes.includes('MANUAL SIM') && rowDealer === selDealer && rowDate === todayStr && rowSender === selSender) {
         matchingRows.push(allData[i]);
       }
     } else {
