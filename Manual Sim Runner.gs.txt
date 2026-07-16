@@ -582,17 +582,17 @@ function runManualSim() {
       false
     );
     Logger.log('Manual sim: review email sent');
-
-  // ── Create Gmail draft for dealer ─────────────────────────────────────────
-  try {
-    _createManualSimDraft(p, allSimResults, porteePdf, pdfId);
-  } catch(e) {
-    Logger.log('Draft creation error (non-fatal): ' + e.message);
-  }
   } catch(e) {
     ui.alert('⚠️ Simulation ran but review email failed:\n' + e.message + '\n\nCheck LOGS sheet for results.');
     Logger.log('sendPipelineReviewEmail error: ' + e.message);
     return;
+  }
+
+  // ── Create Gmail draft for dealer ─────────────────────────────────────────
+  try {
+    _createManualSimDraft(p, allSimResults, porteePdf, pdfId, manualThreadId);
+  } catch(e) {
+    Logger.log('Draft creation error (non-fatal): ' + e.message);
   }
 
   // ── 16. Done ──────────────────────────────────────────────────────────────
@@ -612,7 +612,7 @@ function runManualSim() {
 // _createManualSimDraft — creates a Gmail draft from manual sim results
 // Called automatically at end of runManualSim when Contact email is filled in
 // ─────────────────────────────────────────────────────────────────────────────
-function _createManualSimDraft(p, allSimResults, porteePdfBlob, pdfId) {
+function _createManualSimDraft(p, allSimResults, porteePdfBlob, pdfId, resolvedThreadId) {
   try {
     var toEmail   = p.sender_email;
     if (!toEmail) { Logger.log('Manual sim draft: no contact email — skipping'); return; }
@@ -690,31 +690,18 @@ function _createManualSimDraft(p, allSimResults, porteePdfBlob, pdfId) {
 
     var draftOptions = { htmlBody: htmlBody, attachments: attachments, cc: 'quote@veloxpower.com' };
 
-    // Thread reply vs standalone
-    var threadUrl = p.gmail_thread_url || '';
-    if (threadUrl) {
-      // Extract message ID from URL — format: #inbox/MESSAGEID or #all/MESSAGEID
-      var msgIdMatch = threadUrl.match(/#[^/]+\/([A-Za-z0-9]+)$/);
-      if (msgIdMatch) {
-        var msgId  = msgIdMatch[1];
-        var thread = null;
-        // Try to find thread via search by message ID
-        try {
-          var urlMsg = GmailApp.getMessageById(msgId);
-          if (urlMsg) thread = urlMsg.getThread();
-        } catch(e2) {
-          try { thread = GmailApp.getThreadById(msgId); } catch(e3) {}
-        }
+    // Thread reply vs standalone — use already-resolved thread ID
+    if (resolvedThreadId) {
+      try {
+        var thread = GmailApp.getThreadById(resolvedThreadId);
         if (thread) {
           var messages  = thread.getMessages();
           var replyMsg  = messages[messages.length - 1];
           replyMsg.createDraftReply('', Object.assign({ to: toEmail }, draftOptions));
           Logger.log('Manual sim draft: reply created in thread for ' + toEmail);
           return;
-        } else {
-          Logger.log('Manual sim draft: thread not found from URL — falling back to standalone');
         }
-      }
+      } catch(e2) { Logger.log('Manual sim draft thread error: ' + e2.message); }
     }
 
     // Standalone draft
