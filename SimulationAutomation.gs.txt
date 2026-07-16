@@ -1428,10 +1428,18 @@ function findMaxEfficiency(plan, chargingEvents, veloxFlexMaxEff, targetEfficien
 
   if (coarseFailAt > startEff) {
     const fineStart = coarseFailAt - (coarseStep - 1);
+    const is3ShiftFine = plan.shifts === 3 || (plan.shifts === 2 && plan.shift_duration === 12);
     for (let eff = fineStart; eff < coarseFailAt; eff++) {
       const results = runSingleSim(plan, chargingEvents, eff);
-      Logger.log('  Fine ' + eff + '% -> ' + results.status);
-      if (results.status === 'PASS') { lastPassEff = eff; lastPassResults = results; }
+      const fineSOCok   = results.status === 'PASS';
+      const fineUtilOk  = (results.battery_used_pct || 0) < 240;
+      const fineBoundOk = !is3ShiftFine || (
+        (results.peak_soc_s1 === undefined || results.peak_soc_s1 >= 99) &&
+        (results.peak_soc_s2 === undefined || results.peak_soc_s2 >= 99) &&
+        (results.peak_soc_s3 === undefined || results.peak_soc_s3 >= 99)
+      );
+      Logger.log('  Fine ' + eff + '% -> ' + results.status + ' | bounds: S1=' + Math.round(results.peak_soc_s1 || 0) + '% S2=' + Math.round(results.peak_soc_s2 || 0) + '% S3=' + Math.round(results.peak_soc_s3 || 0) + '%');
+      if (fineSOCok && fineUtilOk && fineBoundOk) { lastPassEff = eff; lastPassResults = results; }
       else break;
     }
   } else if (coarseFailAt === startEff || lastPassEff === 0) {
