@@ -413,15 +413,30 @@ function runManualSim() {
   var flags = ['MANUAL_SIM'];
   if (p.notes) flags.push(p.notes);
 
-  // Extract Gmail thread ID from URL for LOGS and sendToDealerFromRow
+  // Extract Gmail thread ID from URL or direct ID for LOGS and sendToDealerFromRow
   var manualThreadId = '';
   if (p.gmail_thread_url) {
-    var urlMatch = p.gmail_thread_url.match(/#[^/]+\/([A-Za-z0-9]+)$/);
-    if (urlMatch) {
+    var rawThreadVal = p.gmail_thread_url.trim();
+    if (/^\d+$/.test(rawThreadVal)) {
+      // Direct numeric thread ID pasted — use as-is
+      manualThreadId = rawThreadVal;
+      Logger.log('Thread ID from direct input: ' + manualThreadId);
+    } else {
+      // Try as a thread ID directly (hex format from Gmail URL)
       try {
-        var urlMsg = GmailApp.getMessageById(urlMatch[1]);
-        if (urlMsg) manualThreadId = urlMsg.getThread().getId();
-      } catch(e) { Logger.log('Thread ID extraction error: ' + e.message); }
+        var t = GmailApp.getThreadById(rawThreadVal);
+        if (t) { manualThreadId = t.getId(); Logger.log('Thread found by ID: ' + manualThreadId); }
+      } catch(e1) {}
+      // If that failed, try extracting from URL and using as thread ID
+      if (!manualThreadId) {
+        var urlMatch = rawThreadVal.match(/#[^/]+\/([A-Za-z0-9]+)$/);
+        if (urlMatch) {
+          try {
+            var t2 = GmailApp.getThreadById(urlMatch[1]);
+            if (t2) { manualThreadId = t2.getId(); Logger.log('Thread found by URL fragment: ' + manualThreadId); }
+          } catch(e2) { Logger.log('Thread ID extraction error: ' + e2.message); }
+        }
+      }
     }
   }
 
