@@ -429,12 +429,23 @@ function runManualSim() {
       } catch(e1) {}
       // If that failed, try extracting from URL and using as thread ID
       if (!manualThreadId) {
-        var urlMatch = rawThreadVal.match(/#[^/]+\/([A-Za-z0-9]+)$/);
-        if (urlMatch) {
+        // Try popout URL format: th=%23thread-f%3ANUMERICID
+        var popoutMatch = rawThreadVal.match(/th=%23thread-f%3A(\d+)/);
+        if (popoutMatch) {
           try {
-            var t2 = GmailApp.getThreadById(urlMatch[1]);
-            if (t2) { manualThreadId = t2.getId(); Logger.log('Thread found by URL fragment: ' + manualThreadId); }
-          } catch(e2) { Logger.log('Thread ID extraction error: ' + e2.message); }
+            var t3 = GmailApp.getThreadById(popoutMatch[1]);
+            if (t3) { manualThreadId = t3.getId(); Logger.log('Thread found by popout URL: ' + manualThreadId); }
+          } catch(e2) { Logger.log('Thread ID extraction error (popout): ' + e2.message); }
+        }
+        // Try standard #inbox/HEXID format
+        if (!manualThreadId) {
+          var urlMatch = rawThreadVal.match(/#[^/]+\/([A-Za-z0-9]+)$/);
+          if (urlMatch) {
+            try {
+              var t2 = GmailApp.getThreadById(urlMatch[1]);
+              if (t2) { manualThreadId = t2.getId(); Logger.log('Thread found by URL fragment: ' + manualThreadId); }
+            } catch(e2) { Logger.log('Thread ID extraction error: ' + e2.message); }
+          }
         }
       }
     }

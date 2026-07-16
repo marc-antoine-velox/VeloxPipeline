@@ -4011,9 +4011,17 @@ function sendToDealerFromRow() {
           if (/^\d+$/.test(rawThread)) {
             try { thread = GmailApp.getThreadById(rawThread); } catch(e2) {}
           } else {
-            var msgIdMatch = rawThread.match(/#[^/]+\/([A-Za-z0-9]+)$/);
-            if (msgIdMatch) {
-              try { thread = GmailApp.getThreadById(msgIdMatch[1]); } catch(e2) {}
+            // Try popout URL format: th=%23thread-f%3ANUMERICID
+            var popoutMatch = rawThread.match(/th=%23thread-f%3A(\d+)/);
+            if (popoutMatch) {
+              try { thread = GmailApp.getThreadById(popoutMatch[1]); } catch(e2) {}
+            }
+            // Try standard #inbox/HEXID format
+            if (!thread) {
+              var msgIdMatch = rawThread.match(/#[^/]+\/([A-Za-z0-9]+)$/);
+              if (msgIdMatch) {
+                try { thread = GmailApp.getThreadById(msgIdMatch[1]); } catch(e2) {}
+              }
             }
           }
         }
