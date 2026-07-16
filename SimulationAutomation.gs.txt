@@ -176,6 +176,7 @@ Return this exact JSON structure:
 Rules:
 - dealer is the company selling the forklift or battery (e.g. Battelec, Alliance Equipment, Elevex). It is NOT the end customer. It is NOT Velox Power Systems. Never use the recipient's email domain as the dealer. Always use the short commercial name only — strip legal suffixes such as Inc., Ltd., Corp., Inc, Ltée, s.e.n.c., etc. For example, "Battelec Canada Inc." becomes "Battelec Canada", "Alliance Equipment Ltd." becomes "Alliance Equipment". ${dealerListStr} If the extracted dealer name closely matches one of the known dealers above, use that official spelling exactly — never truncate or abbreviate a known dealer name.
 - customer is the end client who operates the forklift (e.g. Vins Arterra Canada, Produits Forestiers Laval). It is NOT the dealer or the person signing the email. If no end customer is explicitly named, leave blank.
+- customer: if the customer name is not mentioned in the email body, check the email subject line — customer names often appear at the start of the subject before a dash or colon (e.g. "Schukra-Lithium Pricing Request" → customer: "Schukra", "Agropur - Simulation Request" → customer: "Agropur", "TR: Schukra-Lithium Pricing Request" → customer: "Schukra"). Ignore prefixes like "RE:", "TR:", "FW:" before extracting. Never use the dealer name, Velox, or Battelec as the customer.
 - sender_name is the full name of the person who wrote or forwarded the email. If the email was forwarded from quotes@veloxpower.com or carolane@veloxpower.com, look deeper in the email body for the original external sender and use that name instead.
 - sender_email is the email address of that same sender. Apply the same forwarding rule as sender_name.
 - use_type is "average", "moderate", or "heavy". Use "moderate" when the dealer explicitly says medium duty, moderate use, or similar. Use "heavy" for GoodFellow, Arterra, paper mill, cold storage, winery, or explicitly heavy/intense use. Long daily hours alone (e.g. "running 14 hours a day") do NOT imply heavy use — that is shift duration, not intensity. Heavy use requires explicit mention of attachments (clamps, rotators) or explicit confirmation from the dealer. Default to "average".
@@ -2990,6 +2991,26 @@ params.email_subject   = subject;
         }
       }
 
+      // ── Customer fallback from subject line ─────────────────────────────
+      if (!params.customer || params.customer.trim() === '') {
+        var subjectClean = (params.email_subject || subject || '')
+          .replace(/^(re|tr|fw|fwd)\s*:\s*/i, '').trim();
+        var subjectMatch = subjectClean.match(/^([A-Za-zÀ-ÿ0-9\s&'.]+?)\s*[-:]/);
+        if (subjectMatch) {
+          var candidate = subjectMatch[1].trim();
+          var excluded = ['simulation', 'batterie', 'battery', 'lithium', 'velox',
+                         'battelec', 'quote', 'soumission', 'pricing', 'request',
+                         'demande', 'chariot', 'forklift'];
+          var isExcluded = excluded.some(function(w) {
+            return candidate.toLowerCase().includes(w);
+          });
+          if (!isExcluded && candidate.length > 2) {
+            params.customer = candidate;
+            Logger.log('Customer inferred from subject line: ' + candidate);
+          }
+        }
+      }
+
       if (!params.voltage || params.voltage === 0) {
   var prescanned = _prescanVoltage(emailText);
   if (prescanned > 0) {
@@ -3546,6 +3567,26 @@ params.dealer = normalizeDealer(params.dealer, knownDealers);
           if (domainKey2) {
             params.dealer = DOMAIN_MAP2[domainKey2];
             Logger.log('Dealer inferred from sender domain: ' + domain2 + ' → ' + params.dealer);
+          }
+        }
+
+        // ── Customer fallback from subject line ───────────────────────────
+        if (!params.customer || params.customer.trim() === '') {
+          var subjectClean2 = (params.email_subject || subject || '')
+            .replace(/^(re|tr|fw|fwd)\s*:\s*/i, '').trim();
+          var subjectMatch2 = subjectClean2.match(/^([A-Za-zÀ-ÿ0-9\s&'.]+?)\s*[-:]/);
+          if (subjectMatch2) {
+            var candidate2 = subjectMatch2[1].trim();
+            var excluded2 = ['simulation', 'batterie', 'battery', 'lithium', 'velox',
+                             'battelec', 'quote', 'soumission', 'pricing', 'request',
+                             'demande', 'chariot', 'forklift'];
+            var isExcluded2 = excluded2.some(function(w) {
+              return candidate2.toLowerCase().includes(w);
+            });
+            if (!isExcluded2 && candidate2.length > 2) {
+              params.customer = candidate2;
+              Logger.log('Customer inferred from subject line: ' + candidate2);
+            }
           }
         }
 
