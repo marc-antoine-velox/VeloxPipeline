@@ -1440,10 +1440,19 @@ function findMaxEfficiency(plan, chargingEvents, veloxFlexMaxEff, targetEfficien
     const isVeloxPlusSearch = String(plan.battery_type || '').toUpperCase().includes('PLUS');
     let foundBelow = false;
     if (isVeloxPlusSearch) {
+      const is3Shift = plan.shifts === 3 || (plan.shifts === 2 && plan.shift_duration === 12);
       for (let eff = startEff - 1; eff >= 10; eff--) {
         const r = runSingleSim(plan, chargingEvents, eff);
-        Logger.log('  Max-search ' + eff + '% -> SOC min: ' + Math.round(r.min_soc || 0) + '%');
-        if (r.min_soc >= 20) {
+        const socOk    = r.min_soc >= 20;
+        const utilOk   = (r.battery_used_pct || 0) < 240;
+        const boundOk  = !is3Shift || (
+          (r.peak_soc_s1 === undefined || r.peak_soc_s1 >= 99) &&
+          (r.peak_soc_s2 === undefined || r.peak_soc_s2 >= 99) &&
+          (r.peak_soc_s3 === undefined || r.peak_soc_s3 >= 99)
+        );
+        const allPass  = socOk && utilOk && boundOk;
+        Logger.log('  Max-search ' + eff + '% -> SOC min: ' + Math.round(r.min_soc || 0) + '% | util: ' + Math.round(r.battery_used_pct || 0) + '% | bounds: S1=' + Math.round(r.peak_soc_s1 || 0) + '% S2=' + Math.round(r.peak_soc_s2 || 0) + '% S3=' + Math.round(r.peak_soc_s3 || 0) + '%');
+        if (allPass) {
           lastPassEff     = eff;
           lastPassResults = r;
           foundBelow      = true;
@@ -4361,7 +4370,7 @@ const today = now.toLocaleString('en-CA', { timeZone: 'America/Toronto' }).repla
       bestWork || '',                      // R - Work_Hours
       params.stated_charge_minutes_per_shift || '', // S - Charge_Minutes
       chargeConstraint,                    // T - Charge_Constraint
-      'PIPELINE',                          // U - Source
+      (params.scenario === 'MANUAL' ? 'MANUAL' : 'PIPELINE'),  // U - Source
       params.language              || '',  // V - Language
       'ENVOYÉE',                           // W - Status
       'TBD',                               // X - Outcome

@@ -239,6 +239,7 @@ function runManualSim() {
     p.forklift_manufacturer + ' ' + p.forklift_model + ' — ' + p.voltage + 'V\n' +
     'Combo 1: ' + p.battery_ah + 'Ah ' + p.battery_type + ' + ' + p.charger_amps + 'A\n' +
     (hasCombo2 ? 'Combo 2: ' + p.battery_ah_2 + 'Ah ' + p.battery_type_2 + ' + ' + p.charger_amps_2 + 'A\n' : '') +
+    (hasCombo3 ? 'Combo 3: ' + p.battery_ah_3 + 'Ah ' + p.battery_type_3 + ' + ' + p.charger_amps_3 + 'A\n' : '') +
     'Shifts: ' + p.shifts + ' × ' + p.shift_duration + 'h\n' +
     'Dealer: ' + p.dealer + '\n\n' +
     'Proceed?',
@@ -493,7 +494,17 @@ function runManualSim() {
       var pdfCol    = heads.indexOf('Portée PDF ID') + 1;
       if (pdfCol > 0 && lastRow > 1) pdfId = logsSheet.getRange(lastRow, pdfCol).getValue() || '';
     } catch(e2) { Logger.log('PDF ID read error: ' + e2.message); }
-    writeToSimDB(fullParams, allSimResults[0].results, pdfId);
+    var simDbRecords = allSimResults.map(function(s) {
+      return {
+        battery_ah:     s.battery_ah,
+        battery_type:   s.battery_type,
+        charger_amps:   s.charger_amps,
+        charger_model:  s.charger_model,
+        efficiency_pct: s.max_efficiency,
+        work_hours:     s.results ? (s.results.work_minutes || 0) : 0,
+      };
+    });
+    writeToSimDB(fullParams, simDbRecords, pdfId);
   } catch(e) {
     Logger.log('writeToSimDB error (non-fatal): ' + e.message);
   }
