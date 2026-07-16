@@ -33,6 +33,7 @@ function buildHTMLPortee(params, allSimResults, allSimScreenshots) {
     const isEN      = lang === 'EN';
     const shiftLabel = (params.shifts || 2) + 'x' + (params.shift_duration || 8) + 'h';
     const customer  = (params.customer || '').replace(/[^a-zA-Z0-9À-ÿ _-]/g, '').trim();
+    const mfrPrefix = params.forklift_manufacturer ? params.forklift_manufacturer.replace(/[\/\\?%*:|"<>]/g, '_') + ' ' : '';
     const title     = (isEN ? 'Scope_' : 'Portée_') + dealer + (customer ? '_' + customer : '') + '_' + mfrPrefix + model + '_' + voltage + 'V_' + shiftLabel;
 
     // Load assets as base64
