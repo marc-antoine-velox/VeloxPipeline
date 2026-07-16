@@ -4009,11 +4009,11 @@ function sendToDealerFromRow() {
         if (threadUrl) {
           var msgIdMatch = threadUrl.match(/#[^/]+\/([A-Za-z0-9]+)$/);
           if (msgIdMatch) {
-            var threads = GmailApp.search('rfc822msgid:' + msgIdMatch[1], 0, 1);
-            if (threads.length > 0) {
-              thread = threads[0];
-            } else {
-              try { thread = GmailApp.getThreadById(msgIdMatch[1]); } catch(e2) {}
+            try {
+              var msg = GmailApp.getMessageById(msgIdMatch[1]);
+              if (msg) thread = msg.getThread();
+            } catch(e2) {
+              try { thread = GmailApp.getThreadById(msgIdMatch[1]); } catch(e3) {}
             }
           }
         }

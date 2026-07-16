@@ -419,12 +419,8 @@ function runManualSim() {
     var urlMatch = p.gmail_thread_url.match(/#[^/]+\/([A-Za-z0-9]+)$/);
     if (urlMatch) {
       try {
-        var urlThreads = GmailApp.search('rfc822msgid:' + urlMatch[1], 0, 1);
-        if (urlThreads.length > 0) {
-          manualThreadId = urlThreads[0].getId();
-        } else {
-          manualThreadId = urlMatch[1];
-        }
+        var urlMsg = GmailApp.getMessageById(urlMatch[1]);
+        if (urlMsg) manualThreadId = urlMsg.getThread().getId();
       } catch(e) { Logger.log('Thread ID extraction error: ' + e.message); }
     }
   }
@@ -667,12 +663,11 @@ function _createManualSimDraft(p, allSimResults, porteePdfBlob, pdfId) {
         var msgId  = msgIdMatch[1];
         var thread = null;
         // Try to find thread via search by message ID
-        var threads = GmailApp.search('rfc822msgid:' + msgId, 0, 1);
-        if (threads.length === 0) {
-          // Fallback: treat the URL fragment as a thread ID directly
-          try { thread = GmailApp.getThreadById(msgId); } catch(e2) {}
-        } else {
-          thread = threads[0];
+        try {
+          var urlMsg = GmailApp.getMessageById(msgId);
+          if (urlMsg) thread = urlMsg.getThread();
+        } catch(e2) {
+          try { thread = GmailApp.getThreadById(msgId); } catch(e3) {}
         }
         if (thread) {
           var messages  = thread.getMessages();
