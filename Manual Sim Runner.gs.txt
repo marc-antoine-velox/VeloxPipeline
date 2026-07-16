@@ -76,36 +76,36 @@ function _createManualSimSheet(ss) {
     [14, 'Battery Ah (combined)',    '',                    'Total Ah for the sim — e.g. 460 for 2× 230Ah',       'number'],
     [15, 'Battery type',             'VeloxPlus',           'VeloxPlus or VeloxFlex',                             'dropdown:VeloxPlus,VeloxFlex'],
     [16, 'Charger amps',             '',                    'e.g. 150, 250, 400',                                 'number'],
-    [17, 'Charger model',            '',                    'e.g. HFM-G6-6003-48/150 — leave blank if unknown',   'text'],
+    [17, 'Charger model',            '',                    'e.g. HFM-G6-6003-48/300 — leave blank if unknown',   'text'],
 
-        // ── Battery & Charger — Combo 2 (optional) ───────────────────────────────
+    // ── Battery & Charger — Combo 2 (optional) ───────────────────────────────
     [18, '── COMBO 2 (optionnel) ──', '',                  '',                                                    'section'],
     [19, 'Battery Ah — Combo 2',      0,                   'Laisser à 0 pour ignorer ce combo',                   'number'],
     [20, 'Battery type — Combo 2',    'VeloxFlex',          'VeloxPlus ou VeloxFlex',                             'dropdown:VeloxPlus,VeloxFlex'],
     [21, 'Charger amps — Combo 2',    0,                   'e.g. 250, 400',                                       'number'],
     [22, 'Charger model — Combo 2',   '',                  'e.g. IHF-GE0-64803-80/250E — leave blank if unknown', 'text'],
 
+    // ── Battery & Charger — Combo 3 (optional) ───────────────────────────────
+    [23, '── COMBO 3 (optionnel) ──', '',                  '',                                                    'section'],
+    [24, 'Battery Ah — Combo 3',      0,                   'Laisser à 0 pour ignorer ce combo',                   'number'],
+    [25, 'Battery type — Combo 3',    'VeloxFlex',          'VeloxPlus ou VeloxFlex',                             'dropdown:VeloxPlus,VeloxFlex'],
+    [26, 'Charger amps — Combo 3',    0,                   'e.g. 250, 400',                                       'number'],
+    [27, 'Charger model — Combo 3',   '',                  'e.g. IHF-GE0-64803-80/250E — leave blank if unknown', 'text'],
+
     // ── Simulation parameters ─────────────────────────────────────────────────
-    [23, '── SIMULATION ──',         '',                   '',                                                    'section'],
-    [24, 'Lead-acid Ah ref',         '',                    'Reference lead-acid capacity for truck load calc',    'number'],
-    [25, 'Shifts',                   1,                     '1, 2, or 3',                                         'dropdown:1,2,3'],
-    [26, 'Shift duration (h)',        8,                    '8 or 12',                                             'dropdown:8,12'],
-    [27, 'Use type',                 'average',             'average / heavy / moderate',                          'dropdown:average,heavy,moderate'],
-    [28, 'Shift start hour',          7,                    '0–23 (24h format) — default 7',                      'number'],
-    [29, 'IP54 charger?',            'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
-    [30, 'Heated charger?',          'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
-    [31, 'Charge par quart (min)',    0,                     '0 = schedule auto · ex: 30 = 30 min de lunch seulement', 'number'],
+    [28, '── SIMULATION ──',         '',                   '',                                                    'section'],
+    [29, 'Lead-acid Ah ref',         '',                    'Reference lead-acid capacity for truck load calc',    'number'],
+    [30, 'Shifts',                   1,                     '1, 2, or 3',                                         'dropdown:1,2,3'],
+    [31, 'Shift duration (h)',        8,                    '8 or 12',                                             'dropdown:8,12'],
+    [32, 'Use type',                 'average',             'average / heavy / moderate',                          'dropdown:average,heavy,moderate'],
+    [33, 'Shift start hour',          7,                    '0–23 (24h format) — default 7',                      'number'],
+    [34, 'IP54 charger?',            'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
+    [35, 'Heated charger?',          'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
+    [36, 'Charge par quart (min)',    0,                     '0 = schedule auto · ex: 30 = 30 min de lunch seulement', 'number'],
 
     // ── Notes ─────────────────────────────────────────────────────────────────
-    [32, '── OPTIONAL ──',           '',                   '',                                                    'section'],
-    [33, 'Notes',                    '',                    'Will appear in LOGS — e.g. [CUSTOM BATTERY] EVE 230Ah', 'text'],
-
-    // ── Battery & Charger — Combo 3 (optional) ───────────────────────────────
-    [34, '── COMBO 3 (optionnel) ──', '',                  '',                                                    'section'],
-    [35, 'Battery Ah — Combo 3',      0,                   'Laisser à 0 pour ignorer ce combo',                   'number'],
-    [36, 'Battery type — Combo 3',    'VeloxFlex',          'VeloxPlus ou VeloxFlex',                             'dropdown:VeloxPlus,VeloxFlex'],
-    [37, 'Charger amps — Combo 3',    0,                   'e.g. 250, 400',                                       'number'],
-    [38, 'Charger model — Combo 3',   '',                  'e.g. IHF-GE0-64803-80/250E — leave blank if unknown', 'text'],
+    [37, '── OPTIONAL ──',           '',                   '',                                                    'section'],
+    [38, 'Notes',                    '',                    'Will appear in LOGS — e.g. [CUSTOM BATTERY] EVE 230Ah', 'text'],
   ];
   rows.forEach(function(r) {
     var row = r[0], label = r[1], def = r[2], hint = r[3], type = r[4];
@@ -139,7 +139,7 @@ function _createManualSimSheet(ss) {
   });
 
   // Run button hint
-  sheet.getRange('A29:C29').merge()
+  sheet.getRange('A40:C40').merge()
     .setValue('▶  When ready: Velox menu → Run Manual Simulation')
     .setFontSize(11).setFontWeight('bold')
     .setBackground('#66BFD4').setFontColor('#18202A')
@@ -186,19 +186,19 @@ function _readManualSimParams() {
     battery_type_2:        cell(20) || 'VeloxFlex',
     charger_amps_2:        num(21),
     charger_model_2:       cell(22),
-    battery_ah_3:          num(35),
-    battery_type_3:        cell(36) || 'VeloxFlex',
-    charger_amps_3:        num(37),
-    charger_model_3:       cell(38),
-    lead_acid_ah:          num(24),
-    shifts:                num(25) || 1,
-    shift_duration:        num(26) || 8,
-    use_type:              cell(27) || 'average',
-    shift_start_hour:      num(28) || 7,
-    ip54_charger:                    cell(29).toUpperCase() === 'YES',
-    heating_option:                  cell(30).toUpperCase() === 'YES',
-    stated_charge_minutes_per_shift: num(31),
-    notes:                           cell(33),
+    battery_ah_3:          num(24),
+    battery_type_3:        cell(25) || 'VeloxFlex',
+    charger_amps_3:        num(26),
+    charger_model_3:       cell(27),
+    lead_acid_ah:          num(29),
+    shifts:                num(30) || 1,
+    shift_duration:        num(31) || 8,
+    use_type:              cell(32) || 'average',
+    shift_start_hour:      num(33) || 7,
+    ip54_charger:                    cell(34).toUpperCase() === 'YES',
+    heating_option:                  cell(35).toUpperCase() === 'YES',
+    stated_charge_minutes_per_shift: num(36),
+    notes:                           cell(38),
   };
 }
 
