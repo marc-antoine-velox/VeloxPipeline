@@ -448,6 +448,16 @@ function runManualSim() {
           }
         }
       }
+      // Final fallback: search by contact email
+      if (!manualThreadId && p.sender_email) {
+        try {
+          var searchResults = GmailApp.search('from:' + p.sender_email + ' OR to:' + p.sender_email, 0, 5);
+          if (searchResults.length > 0) {
+            manualThreadId = searchResults[0].getId();
+            Logger.log('Thread found by contact email search: ' + manualThreadId);
+          }
+        } catch(e3) { Logger.log('Thread search by email error: ' + e3.message); }
+      }
     }
   }
 
