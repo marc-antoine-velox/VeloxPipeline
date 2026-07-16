@@ -369,6 +369,12 @@ function runManualSim() {
       var wh         = calculateWorkHours(chargingEvents, p.shifts, maxEff, p.shift_duration, p.shift_start_hour);
       var isMax      = effFlag && String(effFlag).includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
       var passed     = simRes.status === 'PASS' && !isMax;
+      // Re-run winning efficiency so Formula sheet recalculates correctly for screenshot
+      try {
+        runSingleSim(planObj, chargingEvents, maxEff);
+        SpreadsheetApp.flush();
+        Utilities.sleep(3000);
+      } catch(e2) {}
       var soc        = [];
       try { soc = readAllSOC(); } catch(e2) {}
       try {
