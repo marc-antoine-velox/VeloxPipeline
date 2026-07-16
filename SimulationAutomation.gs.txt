@@ -3772,7 +3772,10 @@ function sendToDealerFromRow() {
   }
   var isEN = langue === 'EN';
 
-  if (!threadId) {
+  var notesFlags = col('Notes/Flags') || '';
+  var isManualSim = notesFlags.toUpperCase().includes('MANUAL SIM');
+
+  if (!threadId && !isManualSim) {
     SpreadsheetApp.getUi().alert('No Gmail Thread ID found on this row.');
     return;
   }
@@ -3785,17 +3788,35 @@ function sendToDealerFromRow() {
   var simCol      = heads.indexOf('No. Simulation');
 
   // Collect all passing rows with same grouping key (or fall back to thread ID)
+  // For manual sims: match by dealer + today's date instead
   var matchingRows = [];
+  var dealerCol  = heads.indexOf('Dealer');
+  var notesCol   = heads.indexOf('Notes/Flags');
+  var dateCol    = 0; // column A is always Date/Heure
+
+  var today = new Date();
+  var todayStr = today.toLocaleDateString('en-CA'); // YYYY-MM-DD
+
   for (var i = 1; i < allData.length; i++) {
     var rowStatus = allData[i][statusCol];
-    if (rowStatus !== 'PASS' && rowStatus !== 'REVIEW') continue;
+    if (rowStatus !== 'PASS' && rowStatus !== 'REVIEW' && rowStatus !== 'MAXIMUM') continue;
 
-    var rowKey      = groupingCol >= 0 ? String(allData[i][groupingCol] || '') : '';
-    var rowThreadId = String(allData[i][threadCol] || '');
-
-    var isMatch = (groupingKey && rowKey && rowKey === groupingKey) ||
-                  (!groupingKey && rowThreadId === threadId);
-    if (isMatch) matchingRows.push(allData[i]);
+    if (isManualSim) {
+      // Manual sim grouping: same dealer + today + MANUAL SIM flag
+      var rowNotes  = String(allData[i][notesCol] || '').toUpperCase();
+      var rowDealer = String(allData[i][dealerCol] || '').trim().toLowerCase();
+      var rowDate   = allData[i][dateCol] ? new Date(allData[i][dateCol]).toLocaleDateString('en-CA') : '';
+      var selDealer = dealer.trim().toLowerCase();
+      if (rowNotes.includes('MANUAL SIM') && rowDealer === selDealer && rowDate === todayStr) {
+        matchingRows.push(allData[i]);
+      }
+    } else {
+      var rowKey      = groupingCol >= 0 ? String(allData[i][groupingCol] || '') : '';
+      var rowThreadId = String(allData[i][threadCol] || '');
+      var isMatch = (groupingKey && rowKey && rowKey === groupingKey) ||
+                    (!groupingKey && rowThreadId === threadId);
+      if (isMatch) matchingRows.push(allData[i]);
+    }
   }
 
   if (matchingRows.length === 0) {
@@ -3963,15 +3984,36 @@ function sendToDealerFromRow() {
   });
 
   // ── Get thread and reply-to ───────────────────────────────────────────────
-  var thread;
-  try {
-    thread = GmailApp.getThreadById(threadId);
-  } catch(e) {
-    SpreadsheetApp.getUi().alert('Could not find Gmail thread: ' + threadId);
-    return;
+  var thread = null;
+  if (threadId) {
+    try {
+      thread = GmailApp.getThreadById(threadId);
+    } catch(e) {
+      SpreadsheetApp.getUi().alert('Could not find Gmail thread: ' + threadId);
+      return;
+    }
+  } else if (isManualSim) {
+    // Try to find thread from Gmail URL in Manual Sim sheet
+    try {
+      var manualSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Manual Sim');
+      if (manualSheet) {
+        var threadUrl = String(manualSheet.getRange(39, 2).getValue() || '').trim();
+        if (threadUrl) {
+          var msgIdMatch = threadUrl.match(/#[^/]+\/([A-Za-z0-9]+)$/);
+          if (msgIdMatch) {
+            var threads = GmailApp.search('rfc822msgid:' + msgIdMatch[1], 0, 1);
+            if (threads.length > 0) {
+              thread = threads[0];
+            } else {
+              try { thread = GmailApp.getThreadById(msgIdMatch[1]); } catch(e2) {}
+            }
+          }
+        }
+      }
+    } catch(e) { Logger.log('Manual sim thread lookup error: ' + e.message); }
   }
 
-  var messages = thread.getMessages();
+  var initialDraft = replyTargetMsg.createDraftReply('', draftOptions);
 var externalAddresses = [];
 var seenAddresses = {};
 
@@ -4189,7 +4231,15 @@ if (forwardedByQuote) {
   if (Object.keys(inlineImagesMap).length > 0) {
     draftOptions.inlineImages = inlineImagesMap;
   }
-  var initialDraft = replyTargetMsg.createDraftReply('', draftOptions);
+  var initialDraft;
+  if (replyTargetMsg) {
+    initialDraft = replyTargetMsg.createDraftReply('', draftOptions);
+  } else {
+    // No thread — standalone draft
+    var standaloneSubject = (isEN ? 'Simulation — ' : 'Simulation — ') +
+      dealer + (col('Client') ? ' | ' + col('Client') : '');
+    initialDraft = GmailApp.createDraft(toList, standaloneSubject, '', draftOptions);
+  }
   var draftId = initialDraft.getId();
   Logger.log('Draft created: ' + draftId);
 
