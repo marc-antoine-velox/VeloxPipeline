@@ -4021,16 +4021,6 @@ function sendToDealerFromRow() {
     } catch(e) { Logger.log('Manual sim thread lookup error: ' + e.message); }
   }
 
-  var initialDraft;
-  if (replyTargetMsg) {
-    initialDraft = replyTargetMsg.createDraftReply('', draftOptions);
-  } else {
-    // No thread — standalone draft (manual sim with no Gmail URL)
-    var standaloneSubject = (isEN ? 'Simulation — ' : 'Simulation — ') +
-      dealer + (col('Client') ? ' | ' + col('Client') : '');
-    initialDraft = GmailApp.createDraft(toList, standaloneSubject, '', draftOptions);
-    Logger.log('Standalone draft created for ' + toList);
-  }
 var externalAddresses = [];
 var seenAddresses = {};
 
@@ -4264,7 +4254,7 @@ if (forwardedByQuote) {
   // Apply dealer label
   var label = GmailApp.getUserLabelByName(dealer);
   if (!label) { try { label = GmailApp.createLabel(dealer); } catch(e) {} }
-  if (label) thread.addLabel(label);
+  if (label && thread) thread.addLabel(label);
 
   SpreadsheetApp.getUi().alert('✅ Draft created for ' + toList +
     ' with ' + allAttachments.length + ' PDF(s) attached.\n' +
