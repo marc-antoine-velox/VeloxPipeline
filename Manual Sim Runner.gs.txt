@@ -373,11 +373,13 @@ function runManualSim() {
       try { soc = readAllSOC(); } catch(e2) {}
       try {
         var logParams = Object.assign({}, fullParams, {
-          battery_ah:     planObj.battery_ah,
-          charger_amps:   planObj.charger_amps,
-          charger_model:  planObj.charger_model,
-          battery_type:   planObj.battery_type,
-          overall_passed: passed,
+          battery_ah:      planObj.battery_ah,
+          charger_amps:    planObj.charger_amps,
+          charger_model:   planObj.charger_model,
+          battery_type:    planObj.battery_type,
+          overall_passed:  passed,
+          work_hours:      wh.formatted,
+          truck_efficiency: maxEff,
         });
         logSimulationResult(logParams, simRes, simNum);
       } catch(e2) {}
