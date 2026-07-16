@@ -276,7 +276,7 @@ function runManualSim() {
   var eboxLabel2 = 'CUSTOM';
   var eboxLabel3 = 'CUSTOM';
   if (p.compartment) {
-    var compParts = p.compartment.replace(/,/g, '.').split(/\s*x\s*/i);
+    var compParts = p.compartment.replace(/,/g, '.').replace(/×/g, 'x').split(/\s*x\s*/i);
     var compL = parseFloat(compParts[0]) || 0;
     var compW = parseFloat(compParts[1]) || 0;
     var compH = parseFloat(compParts[2]) || 0;
