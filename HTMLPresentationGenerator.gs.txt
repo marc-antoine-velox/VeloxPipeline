@@ -515,9 +515,7 @@ function _htmlConclusionSlide(entry, params, simNum, isEN) {
     ? (entry.velox_battery_count + '× Velox' + entry.batteryModel + ' ' + perBatteryAhConc + 'Ah')
     : ('Velox' + entry.batteryModel + ' ' + entry.batteryAh + 'Ah');
 
-  const isMaxPushed = (entry.flags || []).some(function(f) {
-    return String(f).includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
-  });
+  const isMaxPushed = String(entry.flag || '').includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
   const spec = (isEN ? 'Battery ' : 'Batterie ') + batterySpecLabel +
                '  ·  ' + (isEN ? 'Charger ' : 'Chargeur ') + 'Omni ' + entry.chargerAmps + 'A  ·  ' + volt + 'V' +
                (isMaxPushed ? (isEN ? '  ·  Configuration poussée au maximum' : '  ·  Configuration poussée au maximum') : '');
@@ -1103,7 +1101,12 @@ function _htmlLoadStaticSlides(lang) {
 // SIM ENTRIES BUILDER (mirrors _buildSimEntriesFromPipeline)
 // ============================================================
 function _htmlBuildSimEntries(allSimResults, allSimScreenshots, params) {
-  const passing = allSimResults.filter(function(s) { return s.passed; });
+  const isManualRun = allSimResults.some(function(s) { return s.scenario === 'MANUAL'; });
+  const passing = allSimResults.filter(function(s) {
+    if (s.passed) return true;
+    if (isManualRun && String(s.flag || '').includes('VELOXPLUS_POUSSE_AU_MAXIMUM')) return true;
+    return false;
+  });
   const hasConstrainedPass = passing.some(function(s) {
     return (s.scenario || '').includes('CONTRAINTE');
   });
@@ -1203,6 +1206,7 @@ let shiftStart = 7;
       voltage_num:        parseFloat(params.voltage) || 0,
       compartment:        sim.compartment_w || params.compartment_w || '',
       passed:             sim.passed || false,
+      flag:               sim.flag || null,
       schedule:           schedule,
       shiftTimes:         shiftTimes,
       screenshot:         (allSimScreenshots && allSimScreenshots[idx]) || null,
