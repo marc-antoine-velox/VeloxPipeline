@@ -413,6 +413,22 @@ function runManualSim() {
   var flags = ['MANUAL_SIM'];
   if (p.notes) flags.push(p.notes);
 
+  // Extract Gmail thread ID from URL for LOGS and sendToDealerFromRow
+  var manualThreadId = '';
+  if (p.gmail_thread_url) {
+    var urlMatch = p.gmail_thread_url.match(/#[^/]+\/([A-Za-z0-9]+)$/);
+    if (urlMatch) {
+      try {
+        var urlThreads = GmailApp.search('rfc822msgid:' + urlMatch[1], 0, 1);
+        if (urlThreads.length > 0) {
+          manualThreadId = urlThreads[0].getId();
+        } else {
+          manualThreadId = urlMatch[1];
+        }
+      } catch(e) { Logger.log('Thread ID extraction error: ' + e.message); }
+    }
+  }
+
   // ── 9. Build params object for logging / Portée ───────────────────────────
   var fullParams = {
     dealer:                p.dealer,
@@ -445,6 +461,7 @@ function runManualSim() {
     notes:                 '[MANUAL SIM]' + (p.notes ? ' ' + p.notes : ''),
     scenario:              'MANUAL',
     email_subject:         'Manual Sim — ' + p.forklift_manufacturer + ' ' + p.forklift_model,
+    gmail_thread_id:       manualThreadId,
   };
 
   // ── 10. Run simulations ───────────────────────────────────────────────────
