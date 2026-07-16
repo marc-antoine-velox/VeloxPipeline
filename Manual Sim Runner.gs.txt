@@ -106,6 +106,7 @@ function _createManualSimSheet(ss) {
     // ── Notes ─────────────────────────────────────────────────────────────────
     [37, '── OPTIONAL ──',           '',                   '',                                                    'section'],
     [38, 'Notes',                    '',                    'Will appear in LOGS — e.g. [CUSTOM BATTERY] EVE 230Ah', 'text'],
+    [39, 'Gmail thread URL',         '',                    'Paste Gmail URL to reply in existing thread — leave blank for standalone draft', 'text'],
   ];
   rows.forEach(function(r) {
     var row = r[0], label = r[1], def = r[2], hint = r[3], type = r[4];
@@ -199,6 +200,7 @@ function _readManualSimParams() {
     heating_option:                  cell(35).toUpperCase() === 'YES',
     stated_charge_minutes_per_shift: num(36),
     notes:                           cell(38),
+    gmail_thread_url:                cell(39),
   };
 }
 
@@ -523,6 +525,13 @@ function runManualSim() {
       false
     );
     Logger.log('Manual sim: review email sent');
+
+  // ── Create Gmail draft for dealer ─────────────────────────────────────────
+  try {
+    _createManualSimDraft(p, allSimResults, porteePdf, pdfId);
+  } catch(e) {
+    Logger.log('Draft creation error (non-fatal): ' + e.message);
+  }
   } catch(e) {
     ui.alert('⚠️ Simulation ran but review email failed:\n' + e.message + '\n\nCheck LOGS sheet for results.');
     Logger.log('sendPipelineReviewEmail error: ' + e.message);
@@ -540,4 +549,123 @@ function runManualSim() {
     summary + '\n\nReview email sent. Check LOGS for the full entries.',
     ui.ButtonSet.OK
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _createManualSimDraft — creates a Gmail draft from manual sim results
+// Called automatically at end of runManualSim when Contact email is filled in
+// ─────────────────────────────────────────────────────────────────────────────
+function _createManualSimDraft(p, allSimResults, porteePdfBlob, pdfId) {
+  try {
+    var toEmail   = p.sender_email;
+    if (!toEmail) { Logger.log('Manual sim draft: no contact email — skipping'); return; }
+
+    var isEN      = (p.language || 'fr').toUpperCase() === 'EN';
+    var useLabel  = isEN
+      ? (p.use_type === 'heavy' ? 'heavy' : p.use_type === 'moderate' ? 'moderate' : 'average')
+      : (p.use_type === 'heavy' ? 'forte' : p.use_type === 'moderate' ? 'modérée' : 'moyenne');
+
+    var shiftDesc = p.shifts + (isEN ? ' shift' + (p.shifts > 1 ? 's' : '') + ' of ' : ' quart' + (p.shifts > 1 ? 's' : '') + ' de ') + p.shift_duration + 'h';
+
+    // Build body — one block per combo
+    var body = '';
+    allSimResults.forEach(function(s, idx) {
+      var batType   = s.battery_ah <= 450 ? 'VeloxFlex' : s.battery_ah <= 700 ? 'VeloxPlus' : 'VeloxMax';
+      var batLabel  = batType + ' ' + p.voltage + 'V ' + s.battery_ah + 'Ah';
+      var workPerShift = '';
+      if (s.work_hours) {
+        var totalMins = _parseWorkHoursToMinutes(s.work_hours);
+        var perShift  = Math.round(totalMins / (p.shifts || 1));
+        var ph = Math.floor(perShift / 60);
+        var pm = perShift % 60;
+        workPerShift  = ph + 'h' + (pm < 10 ? '0' : '') + pm;
+      }
+      var chargeMin = p.stated_charge_minutes_per_shift || 60;
+      var isMax     = String(s.flag || '').includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
+
+      body += 'S' + (idx + 1) + ' - ' + batLabel + ' + Omni ' + s.charger_amps + 'A';
+      if (isMax) body += (isEN ? ' (pushed to maximum)' : ' (poussé au maximum)');
+      body += '\n';
+      if (isEN) {
+        body += '  • Autonomy of ' + workPerShift + ' per shift\n';
+        body += '  • ' + chargeMin + ' min of charge per shift\n';
+        body += '  • ' + useLabel.charAt(0).toUpperCase() + useLabel.slice(1) + ' consumption\n\n';
+      } else {
+        body += '  • Autonomie de ' + workPerShift + ' par quart\n';
+        body += '  • ' + chargeMin + ' minutes de charge par quart\n';
+        body += '  • Consommation ' + useLabel + '\n\n';
+      }
+    });
+
+    var closing = isEN
+      ? 'All simulations were based on ' + useLabel + ' consumption.\n\nPlease find the Portée attached.\n\nFeel free to contact me if you have any questions.\n\nThank you!'
+      : 'Toutes les simulations ont été basées sur une consommation ' + useLabel + '.\n\nVeuillez trouver la Portée en pièce jointe.\n\nN\'hésitez pas à me contacter si vous avez des questions.\n\nMerci !';
+    body += closing;
+
+    // Subject
+    var shiftLabel = p.shifts + 'x' + p.shift_duration + 'h';
+    var subject    = (isEN ? 'Simulation — ' : 'Simulation — ') +
+                     p.forklift_manufacturer + ' ' + p.forklift_model + ' ' + p.voltage + 'V | ' + shiftLabel +
+                     (p.customer ? ' | ' + p.customer : '');
+
+    // Fetch signature
+    var signature = '';
+    try {
+      var sendAsList   = Gmail.Users.Settings.SendAs.list('me');
+      var sendAsItems  = sendAsList.sendAs || [];
+      for (var si = 0; si < sendAsItems.length; si++) {
+        if (sendAsItems[si].isDefault) { signature = sendAsItems[si].signature || ''; break; }
+      }
+    } catch(e) { Logger.log('Signature fetch error: ' + e.message); }
+
+    var htmlBody = body.replace(/\n/g, '<br>') + '<br><br>' + signature;
+
+    // Attach Portée PDF
+    var attachments = [];
+    if (pdfId) {
+      try {
+        var pdfFile = DriveApp.getFileById(pdfId);
+        attachments.push(pdfFile.getBlob().setName(pdfFile.getName()));
+      } catch(e) { Logger.log('PDF attach error: ' + e.message); }
+    } else if (porteePdfBlob) {
+      attachments.push(porteePdfBlob);
+    }
+
+    var draftOptions = { htmlBody: htmlBody, attachments: attachments, cc: 'quote@veloxpower.com' };
+
+    // Thread reply vs standalone
+    var threadUrl = p.gmail_thread_url || '';
+    if (threadUrl) {
+      // Extract message ID from URL — format: #inbox/MESSAGEID or #all/MESSAGEID
+      var msgIdMatch = threadUrl.match(/#[^/]+\/([A-Za-z0-9]+)$/);
+      if (msgIdMatch) {
+        var msgId  = msgIdMatch[1];
+        var thread = null;
+        // Try to find thread via search by message ID
+        var threads = GmailApp.search('rfc822msgid:' + msgId, 0, 1);
+        if (threads.length === 0) {
+          // Fallback: treat the URL fragment as a thread ID directly
+          try { thread = GmailApp.getThreadById(msgId); } catch(e2) {}
+        } else {
+          thread = threads[0];
+        }
+        if (thread) {
+          var messages  = thread.getMessages();
+          var replyMsg  = messages[messages.length - 1];
+          replyMsg.createDraftReply('', Object.assign({ to: toEmail }, draftOptions));
+          Logger.log('Manual sim draft: reply created in thread for ' + toEmail);
+          return;
+        } else {
+          Logger.log('Manual sim draft: thread not found from URL — falling back to standalone');
+        }
+      }
+    }
+
+    // Standalone draft
+    GmailApp.createDraft(toEmail, subject, '', draftOptions);
+    Logger.log('Manual sim draft: standalone draft created for ' + toEmail);
+
+  } catch(e) {
+    Logger.log('_createManualSimDraft error: ' + e.message);
+  }
 }
