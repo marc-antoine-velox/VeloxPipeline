@@ -3834,12 +3834,14 @@ function sendToDealerFromRow() {
       var rowDate     = rowDateObj ? (rowDateObj.getFullYear() + '-' + String(rowDateObj.getMonth()+1).padStart(2,'0') + '-' + String(rowDateObj.getDate()).padStart(2,'0')) : '';
       var rowSender   = String(allData[i][heads.indexOf('Expéditeur')] || '').toLowerCase();
       var rowClient   = String(allData[i][heads.indexOf('Client')] || '').trim().toLowerCase();
+      var rowModel    = String(allData[i][heads.indexOf('Modèle')] || '').trim().toLowerCase();
       var selDealer   = dealer.trim().toLowerCase();
       var selSender   = col('Expéditeur').toLowerCase();
       var selClient   = col('Client').trim().toLowerCase();
+      var selModel    = col('Modèle').trim().toLowerCase();
       var isMatch = (groupingKey && rowKey && rowKey === groupingKey) ||
                     (threadId && rowThreadId && rowThreadId === threadId) ||
-                    (rowNotes.includes('MANUAL SIM') && rowDealer === selDealer && rowDate === todayStr && rowSender === selSender && rowClient === selClient);
+                    (rowNotes.includes('MANUAL SIM') && rowDealer === selDealer && rowDate === todayStr && rowSender === selSender && rowClient === selClient && rowModel === selModel);
       if (isMatch) matchingRows.push(allData[i]);
     } else {
       var rowKey      = groupingCol >= 0 ? String(allData[i][groupingCol] || '') : '';
