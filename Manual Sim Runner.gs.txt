@@ -434,8 +434,15 @@ function runManualSim() {
         if (popoutMatch) {
           try {
             var t3 = GmailApp.getThreadById(popoutMatch[1]);
-            if (t3) { manualThreadId = t3.getId(); Logger.log('Thread found by popout URL: ' + manualThreadId); }
+            if (t3) { manualThreadId = t3.getId(); Logger.log('Thread found by popout URL (numeric): ' + manualThreadId); }
           } catch(e2) { Logger.log('Thread ID extraction error (popout): ' + e2.message); }
+          if (!manualThreadId) {
+            try {
+              var hexId = parseInt(popoutMatch[1]).toString(16);
+              var t3b = GmailApp.getThreadById(hexId);
+              if (t3b) { manualThreadId = t3b.getId(); Logger.log('Thread found by popout URL (hex): ' + manualThreadId); }
+            } catch(e3) { Logger.log('Thread ID extraction error (hex): ' + e3.message); }
+          }
         }
         // Try standard #inbox/HEXID format
         if (!manualThreadId) {
