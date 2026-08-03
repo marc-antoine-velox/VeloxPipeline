@@ -3825,17 +3825,19 @@ function sendToDealerFromRow() {
     if (!isManualSim && rowStatus !== 'PASS' && rowStatus !== 'REVIEW' && rowStatus !== 'MAXIMUM') continue;
 
     if (isManualSim) {
-      // Manual sim grouping: same dealer + today + MANUAL SIM flag + same sender
-      var rowNotes   = String(allData[i][notesCol] || '').toUpperCase();
-      var rowDealer  = String(allData[i][dealerCol] || '').trim().toLowerCase();
-      var rowDate    = allData[i][dateCol] ? new Date(allData[i][dateCol]).toLocaleDateString('en-CA') : '';
-      var rowSender  = String(allData[i][heads.indexOf('Expéditeur')] || '').toLowerCase();
-      var selDealer  = dealer.trim().toLowerCase();
-      var selSender  = col('Expéditeur').toLowerCase();
-      if (rowNotes.includes('MANUAL SIM') && rowDealer === selDealer && rowDate === todayStr && rowSender === selSender) {
-      // Manual sims bypass the status gate — allow sending regardless of PASS/FAIL
-        matchingRows.push(allData[i]);
-      }
+      var rowNotes    = String(allData[i][notesCol] || '').toUpperCase();
+      var rowKey      = groupingCol >= 0 ? String(allData[i][groupingCol] || '') : '';
+      var rowThreadId = String(allData[i][threadCol] || '');
+      var rowDealer   = String(allData[i][dealerCol] || '').trim().toLowerCase();
+      var rowDateObj  = allData[i][dateCol] ? new Date(allData[i][dateCol]) : null;
+      var rowDate     = rowDateObj ? (rowDateObj.getFullYear() + '-' + String(rowDateObj.getMonth()+1).padStart(2,'0') + '-' + String(rowDateObj.getDate()).padStart(2,'0')) : '';
+      var rowSender   = String(allData[i][heads.indexOf('Expéditeur')] || '').toLowerCase();
+      var selDealer   = dealer.trim().toLowerCase();
+      var selSender   = col('Expéditeur').toLowerCase();
+      var isMatch = (groupingKey && rowKey && rowKey === groupingKey) ||
+                    (threadId && rowThreadId && rowThreadId === threadId) ||
+                    (rowNotes.includes('MANUAL SIM') && rowDealer === selDealer && rowDate === todayStr && rowSender === selSender);
+      if (isMatch) matchingRows.push(allData[i]);
     } else {
       var rowKey      = groupingCol >= 0 ? String(allData[i][groupingCol] || '') : '';
       var rowThreadId = String(allData[i][threadCol] || '');
