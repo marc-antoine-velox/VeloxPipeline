@@ -15,12 +15,13 @@ function testApiKey() {
 function _buildGroupingKey(params) {
   const today   = Utilities.formatDate(new Date(), 'America/Toronto', 'yyyy-MM-dd');
   const dealer  = (params.dealer || '').replace(/[^a-zA-Z0-9]/g, '-');
+  const client  = (params.customer || '').replace(/[^a-zA-Z0-9]/g, '-');
   const subject = (params.email_subject || '')
     .replace(/\s*\[AUTO[^\]]*\]/g, '')
     .replace(/[^a-zA-Z0-9À-ÿ\s]/g, '-')
     .trim()
     .substring(0, 60);
-  return today + '_' + dealer + '_' + subject;
+  return today + '_' + dealer + '_' + client + '_' + subject;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3832,11 +3833,13 @@ function sendToDealerFromRow() {
       var rowDateObj  = allData[i][dateCol] ? new Date(allData[i][dateCol]) : null;
       var rowDate     = rowDateObj ? (rowDateObj.getFullYear() + '-' + String(rowDateObj.getMonth()+1).padStart(2,'0') + '-' + String(rowDateObj.getDate()).padStart(2,'0')) : '';
       var rowSender   = String(allData[i][heads.indexOf('Expéditeur')] || '').toLowerCase();
+      var rowClient   = String(allData[i][heads.indexOf('Client')] || '').trim().toLowerCase();
       var selDealer   = dealer.trim().toLowerCase();
       var selSender   = col('Expéditeur').toLowerCase();
+      var selClient   = col('Client').trim().toLowerCase();
       var isMatch = (groupingKey && rowKey && rowKey === groupingKey) ||
                     (threadId && rowThreadId && rowThreadId === threadId) ||
-                    (rowNotes.includes('MANUAL SIM') && rowDealer === selDealer && rowDate === todayStr && rowSender === selSender);
+                    (rowNotes.includes('MANUAL SIM') && rowDealer === selDealer && rowDate === todayStr && rowSender === selSender && rowClient === selClient);
       if (isMatch) matchingRows.push(allData[i]);
     } else {
       var rowKey      = groupingCol >= 0 ? String(allData[i][groupingCol] || '') : '';
