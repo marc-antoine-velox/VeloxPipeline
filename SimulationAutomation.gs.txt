@@ -76,7 +76,12 @@ function normalizeDealer(extractedDealer, knownDealers) {
     'TOROMONT CAT':         'Toromont',
     'E.M.U':                'Techlift',
     'EMU':                  'Techlift',
-    'E M U':                'Techlift'
+    'E M U':                'Techlift',
+    'RI-GO LIFT':           'Ri-Go Lift Truck',
+    'RI-GO LIFT TRUCK':     'Ri-Go Lift Truck',
+    'RI-GO LIFT TRUCK LTD': 'Ri-Go Lift Truck',
+    'RIGO LIFT':            'Ri-Go Lift Truck',
+    'RI GO LIFT':           'Ri-Go Lift Truck'
   };
   if (ALIASES[input]) {
     Logger.log('Dealer alias applied: "' + extractedDealer + '" → "' + ALIASES[input] + '"');
