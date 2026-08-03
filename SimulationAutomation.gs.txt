@@ -4037,7 +4037,7 @@ function sendToDealerFromRow() {
               try { thread = GmailApp.getThreadById(popoutMatch[1]); } catch(e2) {}
               if (!thread) {
                 try {
-                  var hexId = parseInt(popoutMatch[1]).toString(16);
+                  var hexId = BigInt(popoutMatch[1]).toString(16);
                   thread = GmailApp.getThreadById(hexId);
                 } catch(e3) {}
               }
