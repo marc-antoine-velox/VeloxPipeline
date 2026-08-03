@@ -3822,7 +3822,7 @@ function sendToDealerFromRow() {
 
   for (var i = 1; i < allData.length; i++) {
     var rowStatus = allData[i][statusCol];
-    if (rowStatus !== 'PASS' && rowStatus !== 'REVIEW' && rowStatus !== 'MAXIMUM') continue;
+    if (!isManualSim && rowStatus !== 'PASS' && rowStatus !== 'REVIEW' && rowStatus !== 'MAXIMUM') continue;
 
     if (isManualSim) {
       // Manual sim grouping: same dealer + today + MANUAL SIM flag + same sender
@@ -3833,6 +3833,7 @@ function sendToDealerFromRow() {
       var selDealer  = dealer.trim().toLowerCase();
       var selSender  = col('Expéditeur').toLowerCase();
       if (rowNotes.includes('MANUAL SIM') && rowDealer === selDealer && rowDate === todayStr && rowSender === selSender) {
+      // Manual sims bypass the status gate — allow sending regardless of PASS/FAIL
         matchingRows.push(allData[i]);
       }
     } else {
