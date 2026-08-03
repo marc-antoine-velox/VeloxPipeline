@@ -589,11 +589,12 @@ function runManualSim() {
   }
 
   // ── Create Gmail draft for dealer ─────────────────────────────────────────
-  try {
-    _createManualSimDraft(p, allSimResults, porteePdf, pdfId, manualThreadId);
-  } catch(e) {
-    Logger.log('Draft creation error (non-fatal): ' + e.message);
-  }
+  // Draft creation disabled — use "Send to Dealer" button to send manually
+  // try {
+  //   _createManualSimDraft(p, allSimResults, porteePdf, pdfId, manualThreadId);
+  // } catch(e) {
+  //   Logger.log('Draft creation error (non-fatal): ' + e.message);
+  // }
 
   // ── 16. Done ──────────────────────────────────────────────────────────────
   var summary = allSimResults.map(function(s) {
