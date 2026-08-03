@@ -1260,13 +1260,23 @@ function buildConstrainedChargingEvents(shifts, shiftDuration, minutesPerShift, 
   }
 
   if (shifts === 1 && dur === 12) {
-    // 60 min: lunch + 2 breaks
+    const sh = (shiftStartHour !== undefined && shiftStartHour !== null) ? shiftStartHour : 7;
+    function toTS_1x12(h, extraMins) {
+      const totalMins = h * 60 + (extraMins || 0);
+      const hh = Math.floor(totalMins / 60) % 24;
+      const mm = totalMins % 60;
+      const mmStr = mm < 10 ? '0' + mm : '' + mm;
+      if (hh === 0)  return '12:' + mmStr + ' AM';
+      if (hh === 12) return '12:' + mmStr + ' PM';
+      if (hh < 12)   return hh + ':' + mmStr + ' AM';
+      return (hh - 12) + ':' + mmStr + ' PM';
+    }
     return [
-      { start_day: 1, start_time: '12:00 AM', end_day: 1, end_time: '7:00 AM',  label: 'Pre-Shift Charge' },
-      { start_day: 1, start_time: '11:00 AM', end_day: 1, end_time: '11:15 AM', label: 'S1 Break' },
-      { start_day: 1, start_time: '1:00 PM',  end_day: 1, end_time: '1:30 PM',  label: 'S1 Lunch' },
-      { start_day: 1, start_time: '5:30 PM',  end_day: 1, end_time: '5:45 PM',  label: 'S1 Break' },
-      { start_day: 1, start_time: '7:00 PM',  end_day: 1, end_time: '11:59 PM', label: 'Overnight Charge' }
+      { start_day: 1, start_time: '12:00 AM',             end_day: 1, end_time: toTS_1x12(sh),           label: 'Pre-Shift Charge' },
+      { start_day: 1, start_time: toTS_1x12(sh + 2),      end_day: 1, end_time: toTS_1x12(sh + 2, 15),   label: 'S1 Break' },
+      { start_day: 1, start_time: toTS_1x12(sh + 5),      end_day: 1, end_time: toTS_1x12(sh + 5, 30),   label: 'S1 Lunch' },
+      { start_day: 1, start_time: toTS_1x12(sh + 9),      end_day: 1, end_time: toTS_1x12(sh + 9, 15),   label: 'S1 Break' },
+      { start_day: 1, start_time: toTS_1x12(sh + 12),     end_day: 1, end_time: '11:59 PM',               label: 'Overnight Charge' }
     ];
   }
 
