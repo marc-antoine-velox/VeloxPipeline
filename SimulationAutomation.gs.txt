@@ -4257,7 +4257,9 @@ if (isManualSim && messages.length === 0) {
               bytes = attData.data;
             }
 
-            var blob = Utilities.newBlob(bytes, mimeType, cid);
+            var ext = mimeType.split('/')[1] || 'png';
+            var safeFileName = 'inline_' + Utilities.getUuid().substring(0, 8) + '.' + ext;
+            var blob = Utilities.newBlob(bytes, mimeType, safeFileName);
             inlineImagesMap[cid] = blob;
             Logger.log('  ✓ Inline image attached: ' + cid);
           } catch(attErr) {
