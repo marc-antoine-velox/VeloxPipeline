@@ -315,6 +315,7 @@ function runManualSim() {
   if (eboxLabel === 'NO FIT' && p.compartment) {
     var cb1 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah);
     if (cb1) {
+      plan.displayBatteryType = 'VeloxCUSTOM';
       customBatteryLines.push(
         '• Combo 1 — ' + p.battery_ah + 'Ah : RÉALISABLE' +
         ' (' + cb1.cellName + ', ' + cb1.cols + ' col × ' + cb1.rows + ' rng' +
@@ -328,6 +329,7 @@ function runManualSim() {
   if (hasCombo2 && eboxLabel2 === 'NO FIT' && p.compartment) {
     var cb2 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah_2);
     if (cb2) {
+      plan2.displayBatteryType = 'VeloxCUSTOM';
       customBatteryLines.push(
         '• Combo 2 — ' + p.battery_ah_2 + 'Ah : RÉALISABLE' +
         ' (' + cb2.cellName + ', ' + cb2.cols + ' col × ' + cb2.rows + ' rng' +
@@ -341,6 +343,7 @@ function runManualSim() {
   if (hasCombo3 && eboxLabel3 === 'NO FIT' && p.compartment) {
     var cb3 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah_3);
     if (cb3) {
+      plan3.displayBatteryType = 'VeloxCUSTOM';
       customBatteryLines.push(
         '• Combo 3 — ' + p.battery_ah_3 + 'Ah : RÉALISABLE' +
         ' (' + cb3.cellName + ', ' + cb3.cols + ' col × ' + cb3.rows + ' rng' +
@@ -446,7 +449,7 @@ function runManualSim() {
       return {
         passed: passed, overall_passed: passed, battery_ah: planObj.battery_ah, charger_amps: planObj.charger_amps,
         charger_model: planObj.charger_model, battery_type: planObj.battery_type,
-        battery_label: planObj.battery_type + ' ' + p.voltage + 'V ' + planObj.battery_ah + 'Ah',
+        battery_label: (planObj.displayBatteryType || planObj.battery_type) + ' ' + p.voltage + 'V ' + planObj.battery_ah + 'Ah',
         ebox: eboxLbl || 'CUSTOM', max_efficiency: maxEff, work_hours: wh.formatted,
         results: simRes, soc_over_time: soc, chargingEvents: chargingEvents,
         truck_load: truckLoad,
