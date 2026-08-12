@@ -198,9 +198,9 @@ function _readManualSimParams() {
     shift_start_hour:      num(33) || 7,
     ip54_charger:                    cell(34).toUpperCase() === 'YES',
     heating_option:                  cell(35).toUpperCase() === 'YES',
-    stated_charge_minutes_per_shift: num(36),
-    notes:                           cell(38),
-    gmail_thread_url:                cell(39),
+    stated_charge_minutes_per_shift_raw: num(36),
+    notes:                               cell(38),
+    gmail_thread_url:                    cell(39),
   };
 }
 
@@ -218,6 +218,11 @@ function runManualSim() {
     ui.alert('❌ Error reading Manual Sim sheet:\n' + e.message);
     return;
   }
+
+  // ── Row 36 convention: 0 = no charge during shift, 1 = auto schedule, >1 = literal minutes
+  var raw36 = p.stated_charge_minutes_per_shift;
+  p.no_charge_during_shift          = (raw36 === 0);
+  p.stated_charge_minutes_per_shift = (raw36 <= 1) ? 0 : raw36;
 
   // ── 2. Basic validation ───────────────────────────────────────────────────
   var missing = [];
@@ -348,13 +353,15 @@ function runManualSim() {
   Logger.log('Manual sim plan: ' + JSON.stringify(plan));
 
   // ── 5. Build charging events ───────────────────────────────────────────────
-  var chargingEvents = buildChargingEvents(
-    p.shifts,
-    p.shift_duration,
-    [],
-    p.stated_charge_minutes_per_shift || 0,
-    p.shift_start_hour
-  );
+  var chargingEvents = p.no_charge_during_shift
+    ? buildPostShiftOnlyChargingEvents(p.shift_start_hour, p.shift_duration)
+    : buildChargingEvents(
+        p.shifts,
+        p.shift_duration,
+        [],
+        p.stated_charge_minutes_per_shift || 0,
+        p.shift_start_hour
+      );
 
   // ── 6. Run simulations ────────────────────────────────────────────────────
   var targetEff = 100;
