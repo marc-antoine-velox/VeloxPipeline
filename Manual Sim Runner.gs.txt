@@ -367,6 +367,7 @@ function runManualSim() {
     var cb1 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah);
     if (cb1) {
       plan.displayBatteryType = 'VeloxCUSTOM';
+      plan.customLayout = cb1;
       customBatteryLines.push('• Combo 1 — ' + p.battery_ah + 'Ah : RÉALISABLE (' + cb1.cellName + ', ' + cb1.cols + ' col × ' + cb1.rows + ' rng, ~' + cb1.achievedAh + 'Ah atteints)');
     } else {
       customBatteryLines.push('• Combo 1 — ' + p.battery_ah + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
@@ -376,6 +377,7 @@ function runManualSim() {
     var cb2 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah_2);
     if (cb2) {
       plan2.displayBatteryType = 'VeloxCUSTOM';
+      plan2.customLayout = cb2;
       customBatteryLines.push('• Combo 2 — ' + p.battery_ah_2 + 'Ah : RÉALISABLE (' + cb2.cellName + ', ' + cb2.cols + ' col × ' + cb2.rows + ' rng, ~' + cb2.achievedAh + 'Ah atteints)');
     } else {
       customBatteryLines.push('• Combo 2 — ' + p.battery_ah_2 + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
@@ -385,6 +387,7 @@ function runManualSim() {
     var cb3 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah_3);
     if (cb3) {
       plan3.displayBatteryType = 'VeloxCUSTOM';
+      plan3.customLayout = cb3;
       customBatteryLines.push('• Combo 3 — ' + p.battery_ah_3 + 'Ah : RÉALISABLE (' + cb3.cellName + ', ' + cb3.cols + ' col × ' + cb3.rows + ' rng, ~' + cb3.achievedAh + 'Ah atteints)');
     } else {
       customBatteryLines.push('• Combo 3 — ' + p.battery_ah_3 + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
@@ -622,6 +625,59 @@ function runManualSim() {
   var allPdfs = [];
   if (porteePdf)  allPdfs.push(porteePdf);
   if (dataPdf)    allPdfs.push(dataPdf);
+
+  // ── 15b. Generate custom battery HTML PDFs ────────────────────────────────
+  var customComboPairs = [
+    { plan: plan,  sim: sim1,              targetAh: p.battery_ah,   comboNum: 1 },
+    { plan: plan2, sim: hasCombo2 ? sim2 : null, targetAh: p.battery_ah_2, comboNum: 2 },
+    { plan: plan3, sim: hasCombo3 ? sim3 : null, targetAh: p.battery_ah_3, comboNum: 3 },
+  ];
+  customComboPairs.forEach(function(pair) {
+    if (!pair.plan || !pair.plan.customLayout || !pair.sim) return;
+    try {
+      var simResult    = pair.sim;
+      var workMins     = simResult.results ? (simResult.results.work_minutes || 0) : 0;
+      var wh           = Math.floor(workMins / 60);
+      var wm           = workMins % 60;
+      var workHoursStr = wh + 'h' + (wm < 10 ? '0' : '') + wm;
+      var ghostResult  = {
+        layout:      pair.plan.customLayout,
+        targetAh:    pair.targetAh,
+        achievedAh:  pair.plan.customLayout.achievedAh,
+        chargerAmps: simResult.charger_amps   || 0,
+        chargerModel: simResult.charger_model || '',
+        maxEff:      simResult.max_efficiency || 0,
+        workHours:   workHoursStr,
+        results: {
+          min_soc:          simResult.results ? (simResult.results.min_soc          || 0) : 0,
+          status:           simResult.passed  ? 'PASS' : 'FAIL',
+          battery_used_pct: simResult.results ? (simResult.results.battery_used_pct || 0) : 0,
+        },
+        chargingEvents: chargingEvents,
+      };
+      var customHtml = generateCustomBatteryHTML(fullParams, ghostResult);
+      var customPdfResp = UrlFetchApp.fetch(
+        'https://velox-pdf-service-414761682351.us-central1.run.app/generate-pdf',
+        {
+          method:             'post',
+          contentType:        'application/json',
+          payload:            JSON.stringify({ html: customHtml, pageFormat: 'Letter' }),
+          muteHttpExceptions: true,
+        }
+      );
+      if (customPdfResp.getResponseCode() === 200) {
+        var customBlob = customPdfResp.getBlob().setContentType('application/pdf');
+        customBlob.setName('Batterie_Sur_Mesure_Combo' + pair.comboNum + '.pdf');
+        allPdfs.push(customBlob);
+        Logger.log('Custom battery PDF generated for Combo ' + pair.comboNum);
+      } else {
+        Logger.log('Custom battery PDF Cloud Run error (Combo ' + pair.comboNum + '): HTTP '
+          + customPdfResp.getResponseCode() + ' — ' + customPdfResp.getContentText().substring(0, 200));
+      }
+    } catch(e) {
+      Logger.log('Custom battery PDF error (Combo ' + pair.comboNum + ', non-fatal): ' + e.message);
+    }
+  });
 
   // ── Write to SIM_DB ────────────────────────────────────────────────────────
   try {
