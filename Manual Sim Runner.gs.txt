@@ -220,9 +220,10 @@ function runManualSim() {
   }
 
   // ── Row 36 convention: 0 = no charge during shift, 1 = auto schedule, >1 = literal minutes
-  var raw36 = p.stated_charge_minutes_per_shift;
+  var raw36 = p.stated_charge_minutes_per_shift_raw;
   p.no_charge_during_shift          = (raw36 === 0);
   p.stated_charge_minutes_per_shift = (raw36 <= 1) ? 0 : raw36;
+  Logger.log('raw36 type=' + typeof raw36 + ' value=' + raw36 + ' no_charge=' + p.no_charge_during_shift);
 
   // ── 2. Basic validation ───────────────────────────────────────────────────
   var missing = [];
@@ -271,6 +272,7 @@ function runManualSim() {
     compartment_w:     0,
     shifts:            p.shifts,
     shift_duration:    p.shift_duration,
+    shift_start_hour:  p.shift_start_hour,
     voltage:           p.voltage,
     isVeloxPlusPlan:   isVeloxPlus,
     isFirstPlus:       isVeloxPlus,
@@ -324,6 +326,7 @@ function runManualSim() {
       compartment_w:     0,
       shifts:            p.shifts,
       shift_duration:    p.shift_duration,
+      shift_start_hour:  p.shift_start_hour,
       voltage:           p.voltage,
       isVeloxPlusPlan:   isVeloxPlus2,
       isFirstPlus:       false,
@@ -344,6 +347,7 @@ function runManualSim() {
       compartment_w:     0,
       shifts:            p.shifts,
       shift_duration:    p.shift_duration,
+      shift_start_hour:  p.shift_start_hour,
       voltage:           p.voltage,
       isVeloxPlusPlan:   isVeloxPlus3,
       isFirstPlus:       false,
