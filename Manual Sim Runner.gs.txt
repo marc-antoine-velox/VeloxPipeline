@@ -196,11 +196,12 @@ function _readManualSimParams() {
     shift_duration:        num(31) || 8,
     use_type:              cell(32) || 'average',
     shift_start_hour:      num(33) || 7,
-    ip54_charger:                    cell(34).toUpperCase() === 'YES',
-    heating_option:                  cell(35).toUpperCase() === 'YES',
-    stated_charge_minutes_per_shift_raw: num(36),
-    notes:                               cell(38),
-    gmail_thread_url:                    cell(39),
+    heating_battery:                     cell(34).toUpperCase() === 'YES',
+    ip54_charger:                        cell(35).toUpperCase() === 'YES',
+    heating_option:                      cell(36).toUpperCase() === 'YES',
+    stated_charge_minutes_per_shift_raw: num(37),
+    notes:                               cell(39),
+    gmail_thread_url:                    cell(40),
   };
 }
 
@@ -209,6 +210,7 @@ function _readManualSimParams() {
 // ─────────────────────────────────────────────────────────────────────────────
 function runManualSim() {
   var ui = SpreadsheetApp.getUi();
+  var customBatteryLines = [];
 
   // ── 1. Read params from sheet ─────────────────────────────────────────────
   var p;
@@ -221,6 +223,11 @@ function runManualSim() {
 
   // ── Row 36 convention: 0 = no charge during shift, 1 = auto schedule, >1 = literal minutes
   var raw36 = p.stated_charge_minutes_per_shift_raw;
+
+  // Heated battery increases consumption from average to moderate
+  if (p.heating_battery && p.use_type === 'average') {
+    p.use_type = 'moderate';
+  }
   p.no_charge_during_shift          = (raw36 === 0);
   p.stated_charge_minutes_per_shift = (raw36 <= 1) ? 0 : raw36;
   Logger.log('raw36 type=' + typeof raw36 + ' value=' + raw36 + ' no_charge=' + p.no_charge_during_shift);
@@ -450,6 +457,7 @@ function runManualSim() {
         passed: passed, overall_passed: passed, battery_ah: planObj.battery_ah, charger_amps: planObj.charger_amps,
         charger_model: planObj.charger_model, battery_type: planObj.battery_type,
         battery_label: (planObj.displayBatteryType || planObj.battery_type) + ' ' + p.voltage + 'V ' + planObj.battery_ah + 'Ah',
+      notes: autoNotesStr,
         ebox: eboxLbl || 'CUSTOM', max_efficiency: maxEff, work_hours: wh.formatted,
         results: simRes, soc_over_time: soc, chargingEvents: chargingEvents,
         truck_load: truckLoad,
@@ -632,10 +640,49 @@ function runManualSim() {
   }
 
   // ── Custom battery notes injection ─────────────────────────────────────────
-  if (customBatteryLines.length > 0) {
-    var cbNote = '--- BATTERIE SUR MESURE ---\n' + customBatteryLines.join('\n');
-    fullParams.notes = fullParams.notes ? fullParams.notes + '\n\n' + cbNote : cbNote;
+  // ── Auto-generated notes for LOGS & review email ──────────────────────────
+  var autoNoteLines = [];
+
+  // Ebox per combo
+  var eboxSummary = 'Combo 1 : ' + eboxLabel;
+  if (hasCombo2) {
+    var lbl2 = (eboxLabel2 === 'NO FIT' && plan2.displayBatteryType === 'VeloxCUSTOM') ? 'NO FIT → CUSTOM' : eboxLabel2;
+    eboxSummary += ' | Combo 2 : ' + lbl2;
   }
+  if (hasCombo3) {
+    var lbl3 = (eboxLabel3 === 'NO FIT' && plan3.displayBatteryType === 'VeloxCUSTOM') ? 'NO FIT → CUSTOM' : eboxLabel3;
+    eboxSummary += ' | Combo 3 : ' + lbl3;
+  }
+  autoNoteLines.push('EBOX : ' + eboxSummary);
+
+  // No-charge mode
+  if (p.no_charge_during_shift) autoNoteLines.push('MODE : AUCUNE_CHARGE_EN_SHIFT');
+
+  // Compartment missing
+  if (!p.compartment || p.compartment.trim() === '') autoNoteLines.push('COMPARTIMENT : non spécifié');
+
+  // IP54 charger
+  if (p.ip54_charger) autoNoteLines.push('IP54 : chargeur');
+
+  // Heating
+  if (p.heating_option)  autoNoteLines.push('CHAUFFAGE : chargeur');
+  if (p.heating_battery) autoNoteLines.push('CHAUFFAGE : batterie (consommation → modérée)');
+
+  // Lead-acid reference + use type
+  if (p.lead_acid_ah) {
+    autoNoteLines.push('ACIDE-PLOMB : ' + p.lead_acid_ah + 'Ah — USAGE : ' + p.use_type);
+  }
+
+  // Custom battery results
+  if (customBatteryLines.length > 0) {
+    autoNoteLines.push('--- BATTERIE SUR MESURE ---');
+    customBatteryLines.forEach(function(l) { autoNoteLines.push(l); });
+  }
+
+  var autoNotesStr = autoNoteLines.join('\n');
+
+  // Merge: auto-notes first, then any manual notes the user typed in the sheet
+  fullParams.notes = autoNotesStr + (p.notes ? '\n\n' + p.notes : '');
 
   // ── Send review email ──────────────────────────────────────────────────────
   try {
