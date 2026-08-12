@@ -1129,9 +1129,12 @@ function buildPostShiftOnlyChargingEvents(shiftStartHour, shiftDuration) {
     return (hh - 12) + ':' + mmStr + ' PM';
   }
 
-  return [
-    { start_day: 1, start_time: toTimeStr(endH >= 24 ? 23 : endH), end_day: 1, end_time: '11:59 PM', label: 'Post-Shift Charge' }
-  ];
+  var events = [];
+  if (startH > 0) {
+    events.push({ start_day: 1, start_time: '12:00 AM', end_day: 1, end_time: toTimeStr(startH), label: 'Pre-Shift Charge' });
+  }
+  events.push({ start_day: 1, start_time: toTimeStr(endH >= 24 ? 23 : endH), end_day: 1, end_time: '11:59 PM', label: 'Post-Shift Charge' });
+  return events;
 }
 
 function buildChargingEvents(shifts, shiftDuration, customChargeTimes, statedMinutesPerShift, shiftStartHour) {
