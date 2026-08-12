@@ -300,14 +300,56 @@ function runManualSim() {
         var match2 = (eboxResult.compatible_batteries || []).find(function(b) {
           return b.ah === p.battery_ah_2 && b.voltage === p.voltage;
         });
-        eboxLabel2 = match2 ? match2.ebox : (eboxResult.fitting_eboxes.length > 0 ? eboxResult.fitting_eboxes[0] : 'NO FIT');
+        eboxLabel2 = match2 ? match2.ebox : 'NO FIT';
       }
       // Find which ebox fits combo 3
       if (hasCombo3) {
         var match3 = (eboxResult.compatible_batteries || []).find(function(b) {
           return b.ah === p.battery_ah_3 && b.voltage === p.voltage;
         });
-        eboxLabel3 = match3 ? match3.ebox : (eboxResult.fitting_eboxes.length > 0 ? eboxResult.fitting_eboxes[0] : 'NO FIT');
+        eboxLabel3 = match3 ? match3.ebox : 'NO FIT';
+
+        // ── Custom battery feasibility check for NO FIT combos ──────────────────
+  var customBatteryLines = [];
+
+  if (eboxLabel === 'NO FIT' && p.compartment) {
+    var cb1 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah);
+    if (cb1) {
+      customBatteryLines.push(
+        '• Combo 1 — ' + p.battery_ah + 'Ah : RÉALISABLE' +
+        ' (' + cb1.cellName + ', ' + cb1.cols + ' col × ' + cb1.rows + ' rng' +
+        ', ~' + cb1.achievedAh + 'Ah atteints)'
+      );
+    } else {
+      customBatteryLines.push('• Combo 1 — ' + p.battery_ah + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
+    }
+  }
+
+  if (hasCombo2 && eboxLabel2 === 'NO FIT' && p.compartment) {
+    var cb2 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah_2);
+    if (cb2) {
+      customBatteryLines.push(
+        '• Combo 2 — ' + p.battery_ah_2 + 'Ah : RÉALISABLE' +
+        ' (' + cb2.cellName + ', ' + cb2.cols + ' col × ' + cb2.rows + ' rng' +
+        ', ~' + cb2.achievedAh + 'Ah atteints)'
+      );
+    } else {
+      customBatteryLines.push('• Combo 2 — ' + p.battery_ah_2 + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
+    }
+  }
+
+  if (hasCombo3 && eboxLabel3 === 'NO FIT' && p.compartment) {
+    var cb3 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah_3);
+    if (cb3) {
+      customBatteryLines.push(
+        '• Combo 3 — ' + p.battery_ah_3 + 'Ah : RÉALISABLE' +
+        ' (' + cb3.cellName + ', ' + cb3.cols + ' col × ' + cb3.rows + ' rng' +
+        ', ~' + cb3.achievedAh + 'Ah atteints)'
+      );
+    } else {
+      customBatteryLines.push('• Combo 3 — ' + p.battery_ah_3 + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
+    }
+  }
       }
     }
   }
@@ -584,6 +626,12 @@ function runManualSim() {
     writeToSimDB(fullParams, simDbRecords, pdfId);
   } catch(e) {
     Logger.log('writeToSimDB error (non-fatal): ' + e.message);
+  }
+
+  // ── Custom battery notes injection ─────────────────────────────────────────
+  if (customBatteryLines.length > 0) {
+    var cbNote = '--- BATTERIE SUR MESURE ---\n' + customBatteryLines.join('\n');
+    fullParams.notes = fullParams.notes ? fullParams.notes + '\n\n' + cbNote : cbNote;
   }
 
   // ── Send review email ──────────────────────────────────────────────────────
