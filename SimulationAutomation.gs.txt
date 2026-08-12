@@ -2665,7 +2665,7 @@ function sendPipelineReviewEmail(params, allSimResults, flags, constrainedEvents
 Batterie:            ${sim.battery_ah} Ah
 Chargeur:            ${sim.charger_amps} A${sim.charger_model ? ' (' + sim.charger_model + ')' : ''}
 Voltage:             ${params.voltage}V
-Compartiment:        ${sim.compartment_w ? sim.compartment_w + '"' : 'Non specifie'}
+Compartiment:        ${sim.compartment_w ? sim.compartment_w + '"' : (params.compartment || 'Non specifie')}
 Ebox:                ${sim.ebox || 'Non specifie'}
 Consommation:        ${sim.truck_load} A/hm
 Efficacite max:      ${sim.max_efficiency}%
