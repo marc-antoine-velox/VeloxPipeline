@@ -99,14 +99,15 @@ function _createManualSimSheet(ss) {
     [31, 'Shift duration (h)',        8,                    '8 or 12',                                             'dropdown:8,12'],
     [32, 'Use type',                 'average',             'average / heavy / moderate',                          'dropdown:average,heavy,moderate'],
     [33, 'Shift start hour',          7,                    '0–23 (24h format) — default 7',                      'number'],
-    [34, 'IP54 charger?',            'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
-    [35, 'Heated charger?',          'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
-    [36, 'Charge par quart (min)',    0,                     '0 = schedule auto · ex: 30 = 30 min de lunch seulement', 'number'],
+    [34, 'Heated battery?',          'NO',                  'YES or NO — increases consumption from average to moderate', 'dropdown:YES,NO'],
+    [35, 'IP54 charger?',            'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
+    [36, 'Heated charger?',          'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
+    [37, 'Charge par quart (min)',    0,                     '0 = schedule auto · ex: 30 = 30 min de lunch seulement', 'number'],
 
     // ── Notes ─────────────────────────────────────────────────────────────────
-    [37, '── OPTIONAL ──',           '',                   '',                                                    'section'],
-    [38, 'Notes',                    '',                    'Will appear in LOGS — e.g. [CUSTOM BATTERY] EVE 230Ah', 'text'],
-    [39, 'Gmail thread URL',         '',                    'Paste Gmail URL to reply in existing thread — leave blank for standalone draft', 'text'],
+    [38, '── OPTIONAL ──',           '',                   '',                                                    'section'],
+    [39, 'Notes',                    '',                    'Will appear in LOGS — e.g. [CUSTOM BATTERY] EVE 230Ah', 'text'],
+    [40, 'Gmail thread URL',         '',                    'Paste Gmail URL to reply in existing thread — leave blank for standalone draft', 'text'],
   ];
   rows.forEach(function(r) {
     var row = r[0], label = r[1], def = r[2], hint = r[3], type = r[4];
@@ -140,7 +141,7 @@ function _createManualSimSheet(ss) {
   });
 
   // Run button hint
-  sheet.getRange('A40:C40').merge()
+  sheet.getRange('A41:C41').merge()
     .setValue('▶  When ready: Velox menu → Run Manual Simulation')
     .setFontSize(11).setFontWeight('bold')
     .setBackground('#66BFD4').setFontColor('#18202A')
@@ -315,51 +316,6 @@ function runManualSim() {
           return b.ah === p.battery_ah_3 && b.voltage === p.voltage;
         });
         eboxLabel3 = match3 ? match3.ebox : 'NO FIT';
-
-        // ── Custom battery feasibility check for NO FIT combos ──────────────────
-  var customBatteryLines = [];
-
-  if (eboxLabel === 'NO FIT' && p.compartment) {
-    var cb1 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah);
-    if (cb1) {
-      plan.displayBatteryType = 'VeloxCUSTOM';
-      customBatteryLines.push(
-        '• Combo 1 — ' + p.battery_ah + 'Ah : RÉALISABLE' +
-        ' (' + cb1.cellName + ', ' + cb1.cols + ' col × ' + cb1.rows + ' rng' +
-        ', ~' + cb1.achievedAh + 'Ah atteints)'
-      );
-    } else {
-      customBatteryLines.push('• Combo 1 — ' + p.battery_ah + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
-    }
-  }
-
-  if (hasCombo2 && eboxLabel2 === 'NO FIT' && p.compartment) {
-    var cb2 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah_2);
-    if (cb2) {
-      plan2.displayBatteryType = 'VeloxCUSTOM';
-      customBatteryLines.push(
-        '• Combo 2 — ' + p.battery_ah_2 + 'Ah : RÉALISABLE' +
-        ' (' + cb2.cellName + ', ' + cb2.cols + ' col × ' + cb2.rows + ' rng' +
-        ', ~' + cb2.achievedAh + 'Ah atteints)'
-      );
-    } else {
-      customBatteryLines.push('• Combo 2 — ' + p.battery_ah_2 + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
-    }
-  }
-
-  if (hasCombo3 && eboxLabel3 === 'NO FIT' && p.compartment) {
-    var cb3 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah_3);
-    if (cb3) {
-      plan3.displayBatteryType = 'VeloxCUSTOM';
-      customBatteryLines.push(
-        '• Combo 3 — ' + p.battery_ah_3 + 'Ah : RÉALISABLE' +
-        ' (' + cb3.cellName + ', ' + cb3.cols + ' col × ' + cb3.rows + ' rng' +
-        ', ~' + cb3.achievedAh + 'Ah atteints)'
-      );
-    } else {
-      customBatteryLines.push('• Combo 3 — ' + p.battery_ah_3 + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
-    }
-  }
       }
     }
   }
@@ -404,6 +360,35 @@ function runManualSim() {
       isVeloxPlusPlan:   isVeloxPlus3,
       isFirstPlus:       false,
     };
+  }
+
+  // ── Custom battery feasibility check (after plan2/plan3 exist) ─────────────
+  if (eboxLabel === 'NO FIT' && p.compartment) {
+    var cb1 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah);
+    if (cb1) {
+      plan.displayBatteryType = 'VeloxCUSTOM';
+      customBatteryLines.push('• Combo 1 — ' + p.battery_ah + 'Ah : RÉALISABLE (' + cb1.cellName + ', ' + cb1.cols + ' col × ' + cb1.rows + ' rng, ~' + cb1.achievedAh + 'Ah atteints)');
+    } else {
+      customBatteryLines.push('• Combo 1 — ' + p.battery_ah + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
+    }
+  }
+  if (hasCombo2 && eboxLabel2 === 'NO FIT' && p.compartment) {
+    var cb2 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah_2);
+    if (cb2) {
+      plan2.displayBatteryType = 'VeloxCUSTOM';
+      customBatteryLines.push('• Combo 2 — ' + p.battery_ah_2 + 'Ah : RÉALISABLE (' + cb2.cellName + ', ' + cb2.cols + ' col × ' + cb2.rows + ' rng, ~' + cb2.achievedAh + 'Ah atteints)');
+    } else {
+      customBatteryLines.push('• Combo 2 — ' + p.battery_ah_2 + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
+    }
+  }
+  if (hasCombo3 && eboxLabel3 === 'NO FIT' && p.compartment) {
+    var cb3 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah_3);
+    if (cb3) {
+      plan3.displayBatteryType = 'VeloxCUSTOM';
+      customBatteryLines.push('• Combo 3 — ' + p.battery_ah_3 + 'Ah : RÉALISABLE (' + cb3.cellName + ', ' + cb3.cols + ' col × ' + cb3.rows + ' rng, ~' + cb3.achievedAh + 'Ah atteints)');
+    } else {
+      customBatteryLines.push('• Combo 3 — ' + p.battery_ah_3 + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
+    }
   }
 
   Logger.log('Manual sim plan: ' + JSON.stringify(plan));
@@ -532,6 +517,30 @@ function runManualSim() {
     }
   }
 
+  // ── Auto-generated notes (built before fullParams so LOGS receive them) ─────
+  var autoNoteLines = [];
+  var eboxSummaryStr = 'Combo 1 : ' + eboxLabel;
+  if (hasCombo2) {
+    var lbl2 = (eboxLabel2 === 'NO FIT' && plan2 && plan2.displayBatteryType === 'VeloxCUSTOM') ? 'NO FIT → CUSTOM' : eboxLabel2;
+    eboxSummaryStr += ' | Combo 2 : ' + lbl2;
+  }
+  if (hasCombo3) {
+    var lbl3 = (eboxLabel3 === 'NO FIT' && plan3 && plan3.displayBatteryType === 'VeloxCUSTOM') ? 'NO FIT → CUSTOM' : eboxLabel3;
+    eboxSummaryStr += ' | Combo 3 : ' + lbl3;
+  }
+  autoNoteLines.push('EBOX : ' + eboxSummaryStr);
+  if (p.no_charge_during_shift) autoNoteLines.push('MODE : AUCUNE_CHARGE_EN_SHIFT');
+  if (!p.compartment || p.compartment.trim() === '') autoNoteLines.push('COMPARTIMENT : non spécifié');
+  if (p.ip54_charger)    autoNoteLines.push('IP54 : chargeur');
+  if (p.heating_option)  autoNoteLines.push('CHAUFFAGE : chargeur');
+  if (p.heating_battery) autoNoteLines.push('CHAUFFAGE : batterie (consommation → modérée)');
+  if (p.lead_acid_ah)    autoNoteLines.push('ACIDE-PLOMB : ' + p.lead_acid_ah + 'Ah — USAGE : ' + p.use_type);
+  if (customBatteryLines.length > 0) {
+    autoNoteLines.push('--- BATTERIE SUR MESURE ---');
+    customBatteryLines.forEach(function(l) { autoNoteLines.push(l); });
+  }
+  var autoNotesStr = autoNoteLines.join('\n');
+
   // ── 9. Build params object for logging / Portée ───────────────────────────
   var fullParams = {
     dealer:                p.dealer,
@@ -561,7 +570,7 @@ function runManualSim() {
     heating_option:        p.heating_option,
     overall_passed:        overallPassed,
     flags:                 flags,
-    notes:                 '[MANUAL SIM]' + (p.notes ? ' ' + p.notes : ''),
+    notes:                 autoNotesStr + (p.notes ? '\n\n' + p.notes : ''),
     scenario:              'MANUAL',
     email_subject:         'Manual Sim — ' + p.forklift_manufacturer + ' ' + p.forklift_model,
     gmail_thread_id:       manualThreadId,
@@ -639,50 +648,6 @@ function runManualSim() {
     Logger.log('writeToSimDB error (non-fatal): ' + e.message);
   }
 
-  // ── Custom battery notes injection ─────────────────────────────────────────
-  // ── Auto-generated notes for LOGS & review email ──────────────────────────
-  var autoNoteLines = [];
-
-  // Ebox per combo
-  var eboxSummary = 'Combo 1 : ' + eboxLabel;
-  if (hasCombo2) {
-    var lbl2 = (eboxLabel2 === 'NO FIT' && plan2.displayBatteryType === 'VeloxCUSTOM') ? 'NO FIT → CUSTOM' : eboxLabel2;
-    eboxSummary += ' | Combo 2 : ' + lbl2;
-  }
-  if (hasCombo3) {
-    var lbl3 = (eboxLabel3 === 'NO FIT' && plan3.displayBatteryType === 'VeloxCUSTOM') ? 'NO FIT → CUSTOM' : eboxLabel3;
-    eboxSummary += ' | Combo 3 : ' + lbl3;
-  }
-  autoNoteLines.push('EBOX : ' + eboxSummary);
-
-  // No-charge mode
-  if (p.no_charge_during_shift) autoNoteLines.push('MODE : AUCUNE_CHARGE_EN_SHIFT');
-
-  // Compartment missing
-  if (!p.compartment || p.compartment.trim() === '') autoNoteLines.push('COMPARTIMENT : non spécifié');
-
-  // IP54 charger
-  if (p.ip54_charger) autoNoteLines.push('IP54 : chargeur');
-
-  // Heating
-  if (p.heating_option)  autoNoteLines.push('CHAUFFAGE : chargeur');
-  if (p.heating_battery) autoNoteLines.push('CHAUFFAGE : batterie (consommation → modérée)');
-
-  // Lead-acid reference + use type
-  if (p.lead_acid_ah) {
-    autoNoteLines.push('ACIDE-PLOMB : ' + p.lead_acid_ah + 'Ah — USAGE : ' + p.use_type);
-  }
-
-  // Custom battery results
-  if (customBatteryLines.length > 0) {
-    autoNoteLines.push('--- BATTERIE SUR MESURE ---');
-    customBatteryLines.forEach(function(l) { autoNoteLines.push(l); });
-  }
-
-  var autoNotesStr = autoNoteLines.join('\n');
-
-  // Merge: auto-notes first, then any manual notes the user typed in the sheet
-  fullParams.notes = autoNotesStr + (p.notes ? '\n\n' + p.notes : '');
 
   // ── Send review email ──────────────────────────────────────────────────────
   try {
