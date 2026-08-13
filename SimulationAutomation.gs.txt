@@ -3976,6 +3976,14 @@ function sendToDealerFromRow() {
         var truckLoad  = rowCol(row, 'Truck Load A/hm');
         var useType    = (rowCol(row, 'Use Type') || 'average').toLowerCase();
         var batType    = rowCol(row, 'Battery Type') || (battAh <= 450 ? 'VeloxFlex' : battAh <= 700 ? 'VeloxPlus' : 'VeloxMax');
+        var simNum = parseInt(rowCol(row, 'No. Simulation')) || 0;
+if (simNum > 0) {
+  var rowNotes = rowCol(row, 'Notes/Flags') || '';
+  var customPat = new RegExp('Combo\\s+' + simNum + '[^\\n]*R\u00c9ALISABLE', 'i');
+  if (customPat.test(rowNotes)) {
+    batType = 'VeloxCUSTOM';
+  }
+}
 
         // Detect dual-battery truck from flags column
         var notesFlags = rowCol(row, 'Notes/Flags') || '';

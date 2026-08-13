@@ -580,7 +580,7 @@ function runManualSim() {
     overall_passed:        overallPassed,
     flags:                 flags,
     notes:                 autoNotesStr + (p.notes ? '\n\n' + p.notes : ''),
-    scenario:              'MANUAL',
+    scenario:              (p.stated_charge_minutes_per_shift_raw > 1) ? 'MANUAL ' + Math.round(p.stated_charge_minutes_per_shift_raw) + 'min' : 'MANUAL',
     email_subject:         'Manual Sim — ' + p.forklift_manufacturer + ' ' + p.forklift_model,
     gmail_thread_id:       manualThreadId,
   };
