@@ -3824,7 +3824,7 @@ function sendToDealerFromRow() {
   var isEN = langue === 'EN';
 
   var notesFlags = col('Notes/Flags') || '';
-  var isManualSim = notesFlags.toUpperCase().includes('MANUAL SIM');
+  var isManualSim = /MANUAL[_ ]SIM/i.test(notesFlags);
 
   if (!threadId && !isManualSim) {
     SpreadsheetApp.getUi().alert('No Gmail Thread ID found on this row.');
@@ -3868,13 +3868,14 @@ function sendToDealerFromRow() {
       var selModel    = col('Modèle').trim().toLowerCase();
       var isMatch = (groupingKey && rowKey && rowKey === groupingKey) ||
                     (threadId && rowThreadId && rowThreadId === threadId) ||
-                    (rowNotes.includes('MANUAL SIM') && rowDealer === selDealer && rowDate === todayStr && rowSender === selSender && rowClient === selClient && rowModel === selModel);
+                    (rowNotes.includes('MANUAL SIM') && rowDealer === selDealer && rowDate === todayStr && rowSender === selSender && rowClient === selClient);
+                    // rowModel check removed — allows different truck models from the same email to be bundled
       if (isMatch) matchingRows.push(allData[i]);
     } else {
       var rowKey      = groupingCol >= 0 ? String(allData[i][groupingCol] || '') : '';
       var rowThreadId = String(allData[i][threadCol] || '');
       var isMatch = (groupingKey && rowKey && rowKey === groupingKey) ||
-                    (!groupingKey && rowThreadId === threadId);
+              (threadId && rowThreadId && rowThreadId === threadId);
       if (isMatch) matchingRows.push(allData[i]);
     }
   }
