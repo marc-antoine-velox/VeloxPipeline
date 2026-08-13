@@ -748,12 +748,15 @@ function runManualSim() {
   }
 
   // ── Write custom battery PDF link to LOGS column AH ─────────────────────
+  // Matches by thread ID + sim number — NOT by row position — so deduplication
+  // (combo already existed → skipped) cannot cause the link to land on the
+  // wrong row.
   try {
-    var logsForCustom  = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('LOGS');
-    var logsHeads      = logsForCustom.getRange(1, 1, 1, logsForCustom.getLastColumn()).getValues()[0];
-    var simNumCol      = 21; // U — No. Simulation
-
-    var customLinkCol = 34; // AH — Custom Battery PDF Link (clickable, no separate ID column)
+    var logsForCustom   = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('LOGS');
+    var logsHeads       = logsForCustom.getRange(1, 1, 1, logsForCustom.getLastColumn()).getValues()[0];
+    var threadCol       = 24; // X — Thread Gmail
+    var simNumCol       = 21; // U — No. Simulation
+    var customLinkCol   = 34; // AH — Custom Battery PDF Link
 
     // Ensure AH header is set
     if (!logsHeads[33] || logsHeads[33] === '') {
@@ -762,18 +765,24 @@ function runManualSim() {
 
     var hasCustoIds = customComboPairs.some(function(pair) { return !!pair.customPdfId; });
     if (hasCustoIds) {
-      var logsLastRow = logsForCustom.getLastRow();
-      var numSims     = allSimResults.length;
-      var checkFrom   = Math.max(2, logsLastRow - numSims + 1);
-      var logsBlock   = logsForCustom.getRange(checkFrom, 1, logsLastRow - checkFrom + 1,
-                          Math.max(logsForCustom.getLastColumn(), customLinkCol)).getValues();
+      var currentThreadId = fullParams.gmail_thread_id || '';
+      var logsLastRow     = logsForCustom.getLastRow();
+      // Look back up to 100 rows — no assumption about how many were newly written
+      var searchFrom  = Math.max(2, logsLastRow - 100);
+      var numCols     = Math.max(logsForCustom.getLastColumn(), customLinkCol);
+      var logsBlock   = logsForCustom.getRange(searchFrom, 1, logsLastRow - searchFrom + 1, numCols).getValues();
       logsBlock.forEach(function(row, idx) {
-        var rowSimNum = row[simNumCol - 1];
+        var rowThreadId = row[threadCol - 1]; // col X (index 23)
+        var rowSimNum   = row[simNumCol - 1]; // col U (index 20)
         var matchPair = customComboPairs.filter(function(pair) {
-          return pair.customPdfId && pair.comboNum == rowSimNum;
+          if (!pair.customPdfId) return false;
+          if (pair.comboNum != rowSimNum) return false;
+          // Thread ID guard: if we have one, the row must match it exactly
+          if (currentThreadId && rowThreadId != currentThreadId) return false;
+          return true;
         })[0];
         if (matchPair) {
-          var rowNum = checkFrom + idx;
+          var rowNum = searchFrom + idx;
           var pdfUrl = 'https://drive.google.com/file/d/' + matchPair.customPdfId + '/view';
           logsForCustom.getRange(rowNum, customLinkCol).setFormula(
             '=HYPERLINK("' + pdfUrl + '","📄 Batterie Sur Mesure")'
