@@ -1068,7 +1068,9 @@ function _htmlLoadForkliftB64(model, brand) {
       const all = folder.getFiles();
       while (all.hasNext()) {
         const f = all.next();
-        if (f.getName().toLowerCase().replace(/[^a-z0-9]/g,'').includes(modelKey))
+        var fNorm    = f.getName().toLowerCase().replace(/[^a-z0-9]/g,'');
+        var matchIdx = fNorm.indexOf(modelKey);
+        if (matchIdx >= 0 && !/[a-z0-9]/.test(fNorm[matchIdx + modelKey.length] || ''))
           return Utilities.base64Encode(f.getBlob().getBytes());
       }
     }

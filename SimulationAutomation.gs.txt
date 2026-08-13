@@ -322,7 +322,8 @@ function writeSimulationToSheet(params) {
   dataSheet.getRange('J5').setValue(params.truck_load);
   dataSheet.getRange('J6').setValue(params.truck_efficiency);
   dataSheet.getRange('J7').setValue(params.charger_amps);
-  dataSheet.getRange('J8').setValue(0.80);
+  var existingEff = dataSheet.getRange('J8').getValue();
+dataSheet.getRange('J8').setValue(existingEff > 0 ? existingEff : 0.80);
   dataSheet.getRange('J9').setValue(100);
   dataSheet.getRange('J10').setValue(params.shift1_label);
   dataSheet.getRange('J11').setValue(params.shift2_label);
@@ -3973,7 +3974,7 @@ function sendToDealerFromRow() {
         var workHours  = ph + 'h' + (pm < 10 ? '0' : '') + pm;
         var truckLoad  = rowCol(row, 'Truck Load A/hm');
         var useType    = (rowCol(row, 'Use Type') || 'average').toLowerCase();
-        var batType    = battAh <= 450 ? 'VeloxFlex' : battAh <= 700 ? 'VeloxPlus' : 'VeloxMax';
+        var batType    = rowCol(row, 'Battery Type') || (battAh <= 450 ? 'VeloxFlex' : battAh <= 700 ? 'VeloxPlus' : 'VeloxMax');
 
         // Detect dual-battery truck from flags column
         var notesFlags = rowCol(row, 'Notes/Flags') || '';
@@ -3991,8 +3992,14 @@ function sendToDealerFromRow() {
         var scenario   = rowCol(row, 'Scénario') || '';
         var minMatch   = scenario.match(/(\d+)min/i);
         if (minMatch) chargeMin = parseInt(minMatch[1]);
-
-        body += 'S' + (idx + 1) + ' - ' + simBatLabel + ' + Omni ' + chargerA + 'A\n';
+        // ── Charger prefix: derive from PN (LI- = IP54; TMFR/TNFR suffix = heated) ──
+        var chargerPn     = rowCol(row, 'Charger Model') || '';
+        var chargerPrefix = 'Omni';
+        if (/^LI-/i.test(chargerPn)) {
+          chargerPrefix += ' IP54';
+          if (/R$/i.test(chargerPn)) chargerPrefix += ' Chauffé';
+        }
+        body += 'S' + (idx + 1) + ' - ' + simBatLabel + ' + ' + chargerPrefix + ' ' + chargerA + 'A\n';
         if (isEN) {
           body += '  • Autonomy of ' + workHours + ' per shift\n';
           body += '  • ' + chargeMin + ' min of charge per shift\n';
