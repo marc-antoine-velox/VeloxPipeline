@@ -533,7 +533,13 @@ function runManualSim() {
   }
   autoNoteLines.push('EBOX : ' + eboxSummaryStr);
   if (p.no_charge_during_shift) autoNoteLines.push('MODE : AUCUNE_CHARGE_EN_SHIFT');
-  if (!p.compartment || p.compartment.trim() === '') autoNoteLines.push('COMPARTIMENT : non spécifié');
+  if (!p.compartment || p.compartment.trim() === '') {
+    autoNoteLines.push('COMPARTIMENT : non spécifié');
+    var anyNoFit = eboxLabel === 'NO FIT'
+      || (hasCombo2 && eboxLabel2 === 'NO FIT')
+      || (hasCombo3 && eboxLabel3 === 'NO FIT');
+    if (anyNoFit) autoNoteLines.push('⚠ COMPARTIMENT MANQUANT — vérification batterie sur mesure ignorée');
+  }
   if (p.ip54_charger)    autoNoteLines.push('IP54 : chargeur');
   if (p.heating_option)  autoNoteLines.push('CHAUFFAGE : chargeur');
   if (p.heating_battery) autoNoteLines.push('CHAUFFAGE : batterie (consommation → modérée)');
@@ -655,7 +661,8 @@ function runManualSim() {
         },
         chargingEvents: chargingEvents,
       };
-      var customHtml = generateCustomBatteryHTML(fullParams, ghostResult);
+      var customHtml    = generateCustomBatteryHTML(fullParams, ghostResult);
+      var customPdfName = _buildCustomBatteryPdfName(fullParams, pair.targetAh, pair.comboNum);
       var customPdfResp = UrlFetchApp.fetch(
         'https://velox-pdf-service-414761682351.us-central1.run.app/generate-pdf',
         {
@@ -667,9 +674,24 @@ function runManualSim() {
       );
       if (customPdfResp.getResponseCode() === 200) {
         var customBlob = customPdfResp.getBlob().setContentType('application/pdf');
-        customBlob.setName('Batterie_Sur_Mesure_Combo' + pair.comboNum + '.pdf');
+        customBlob.setName(customPdfName);
         allPdfs.push(customBlob);
-        Logger.log('Custom battery PDF generated for Combo ' + pair.comboNum);
+        Logger.log('Custom battery PDF generated for Combo ' + pair.comboNum + ': ' + customPdfName);
+
+        // ── Save to Drive (dealer subfolder inside Portées) ──────────────────
+        try {
+          var porteeRoot   = DriveApp.getFolderById('1j1ADg0s02dKVdcCoGOZQl9IbCWt7k7Ba');
+          var dealerName   = fullParams.dealer || 'Unknown';
+          var dealerFolderIt = porteeRoot.getFoldersByName(dealerName);
+          var dealerFolder = dealerFolderIt.hasNext()
+            ? dealerFolderIt.next()
+            : porteeRoot.createFolder(dealerName);
+          var savedFile    = dealerFolder.createFile(customBlob.copyBlob());
+          pair.customPdfId = savedFile.getId();
+          Logger.log('Custom battery PDF saved to Drive: ' + pair.customPdfId);
+        } catch(eDrive) {
+          Logger.log('Custom battery PDF Drive save error (Combo ' + pair.comboNum + ', non-fatal): ' + eDrive.message);
+        }
       } else {
         Logger.log('Custom battery PDF Cloud Run error (Combo ' + pair.comboNum + '): HTTP '
           + customPdfResp.getResponseCode() + ' — ' + customPdfResp.getContentText().substring(0, 200));
@@ -723,6 +745,40 @@ function runManualSim() {
     ui.alert('⚠️ Simulation ran but review email failed:\n' + e.message + '\n\nCheck LOGS sheet for results.');
     Logger.log('sendPipelineReviewEmail error: ' + e.message);
     return;
+  }
+
+  // ── Write custom battery PDF IDs to LOGS column AE ───────────────────────
+  try {
+    var logsForCustom  = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('LOGS');
+    var logsHeads      = logsForCustom.getRange(1, 1, 1, logsForCustom.getLastColumn()).getValues()[0];
+    var customPdfCol   = 31; // AE
+    var simNumCol      = 21; // U — No. Simulation
+
+    // Ensure header is set
+    if (!logsHeads[30] || logsHeads[30] === '' || logsHeads[30] === '(reserved)') {
+      logsForCustom.getRange(1, customPdfCol).setValue('Custom Battery PDF ID');
+    }
+
+    var hasCustoIds = customComboPairs.some(function(pair) { return !!pair.customPdfId; });
+    if (hasCustoIds) {
+      var logsLastRow  = logsForCustom.getLastRow();
+      var numSims      = allSimResults.length;
+      var checkFrom    = Math.max(2, logsLastRow - numSims + 1);
+      var logsBlock    = logsForCustom.getRange(checkFrom, 1, logsLastRow - checkFrom + 1,
+                           Math.max(logsForCustom.getLastColumn(), customPdfCol)).getValues();
+      logsBlock.forEach(function(row, idx) {
+        var rowSimNum = row[simNumCol - 1];
+        var matchPair = customComboPairs.filter(function(pair) {
+          return pair.customPdfId && pair.comboNum == rowSimNum;
+        })[0];
+        if (matchPair) {
+          logsForCustom.getRange(checkFrom + idx, customPdfCol).setValue(matchPair.customPdfId);
+          Logger.log('Custom battery PDF ID written to LOGS row ' + (checkFrom + idx));
+        }
+      });
+    }
+  } catch(eLog) {
+    Logger.log('Custom battery PDF LOGS write error (non-fatal): ' + eLog.message);
   }
 
   // ── Create Gmail draft for dealer ─────────────────────────────────────────
@@ -849,4 +905,44 @@ function _createManualSimDraft(p, allSimResults, porteePdfBlob, pdfId, resolvedT
   } catch(e) {
     Logger.log('_createManualSimDraft error: ' + e.message);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom battery PDF helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Sanitizes a string for use as a filename segment.
+ * - Removes quotes
+ * - Normalises dimension separators (x, ×, X) — no spaces around them
+ * - Strips all remaining spaces and special characters
+ */
+function _sanitizeFilePart(str) {
+  return (str || '')
+    .replace(/"/g, '')
+    .replace(/\s*[xX×]\s*/g, 'x')
+    .replace(/\s+/g, '')
+    .replace(/[^a-zA-Z0-9.\-]/g, '')
+    || 'NA';
+}
+
+/**
+ * Builds the Drive filename for a custom battery PDF.
+ * Format: CUSTOM_[Dealer]_[Client?]_[Brand]_[Model]_[Compartment]_[V]V_[Ah]Ah_Combo[N]_[YYYY-MM-DD].pdf
+ */
+function _buildCustomBatteryPdfName(params, targetAh, comboNum) {
+  var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  var parts = [
+    'CUSTOM',
+    _sanitizeFilePart(params.dealer),
+    params.customer ? _sanitizeFilePart(params.customer) : null,
+    _sanitizeFilePart(params.forklift_manufacturer),
+    _sanitizeFilePart(params.forklift_model),
+    _sanitizeFilePart(params.compartment),
+    (params.voltage || '') + 'V',
+    (targetAh || '') + 'Ah',
+    'Combo' + comboNum,
+    today,
+  ].filter(Boolean);
+  return parts.join('_') + '.pdf';
 }
