@@ -747,33 +747,38 @@ function runManualSim() {
     return;
   }
 
-  // ── Write custom battery PDF IDs to LOGS column AE ───────────────────────
+  // ── Write custom battery PDF link to LOGS column AH ─────────────────────
   try {
     var logsForCustom  = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('LOGS');
     var logsHeads      = logsForCustom.getRange(1, 1, 1, logsForCustom.getLastColumn()).getValues()[0];
-    var customPdfCol   = 31; // AE
     var simNumCol      = 21; // U — No. Simulation
 
-    // Ensure header is set
-    if (!logsHeads[30] || logsHeads[30] === '' || logsHeads[30] === '(reserved)') {
-      logsForCustom.getRange(1, customPdfCol).setValue('Custom Battery PDF ID');
+    var customLinkCol = 34; // AH — Custom Battery PDF Link (clickable, no separate ID column)
+
+    // Ensure AH header is set
+    if (!logsHeads[33] || logsHeads[33] === '') {
+      logsForCustom.getRange(1, customLinkCol).setValue('Custom Battery PDF Link');
     }
 
     var hasCustoIds = customComboPairs.some(function(pair) { return !!pair.customPdfId; });
     if (hasCustoIds) {
-      var logsLastRow  = logsForCustom.getLastRow();
-      var numSims      = allSimResults.length;
-      var checkFrom    = Math.max(2, logsLastRow - numSims + 1);
-      var logsBlock    = logsForCustom.getRange(checkFrom, 1, logsLastRow - checkFrom + 1,
-                           Math.max(logsForCustom.getLastColumn(), customPdfCol)).getValues();
+      var logsLastRow = logsForCustom.getLastRow();
+      var numSims     = allSimResults.length;
+      var checkFrom   = Math.max(2, logsLastRow - numSims + 1);
+      var logsBlock   = logsForCustom.getRange(checkFrom, 1, logsLastRow - checkFrom + 1,
+                          Math.max(logsForCustom.getLastColumn(), customLinkCol)).getValues();
       logsBlock.forEach(function(row, idx) {
         var rowSimNum = row[simNumCol - 1];
         var matchPair = customComboPairs.filter(function(pair) {
           return pair.customPdfId && pair.comboNum == rowSimNum;
         })[0];
         if (matchPair) {
-          logsForCustom.getRange(checkFrom + idx, customPdfCol).setValue(matchPair.customPdfId);
-          Logger.log('Custom battery PDF ID written to LOGS row ' + (checkFrom + idx));
+          var rowNum = checkFrom + idx;
+          var pdfUrl = 'https://drive.google.com/file/d/' + matchPair.customPdfId + '/view';
+          logsForCustom.getRange(rowNum, customLinkCol).setFormula(
+            '=HYPERLINK("' + pdfUrl + '","📄 Batterie Sur Mesure")'
+          );
+          Logger.log('Custom battery PDF link written to LOGS row ' + rowNum + ' (AH)');
         }
       });
     }
