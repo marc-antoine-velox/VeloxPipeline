@@ -96,18 +96,19 @@ function _createManualSimSheet(ss) {
     [28, '── SIMULATION ──',         '',                   '',                                                    'section'],
     [29, 'Lead-acid Ah ref',         '',                    'Reference lead-acid capacity for truck load calc',    'number'],
     [30, 'Shifts',                   1,                     '1, 2, or 3',                                         'dropdown:1,2,3'],
-    [31, 'Shift duration (h)',        8,                    '8 or 12',                                             'dropdown:8,12'],
+    [31, 'Shift duration (h)',        8,                    '8, 10 or 12',                                             'dropdown:8,10,12'],
     [32, 'Use type',                 'average',             'average / heavy / moderate',                          'dropdown:average,heavy,moderate'],
     [33, 'Shift start hour',          7,                    '0–23 (24h format) — default 7',                      'number'],
     [34, 'Heated battery?',          'NO',                  'YES or NO — increases consumption from average to moderate', 'dropdown:YES,NO'],
     [35, 'IP54 charger?',            'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
     [36, 'Heated charger?',          'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
-    [37, 'Charge par quart (min)',    0,                     '0 = schedule auto · ex: 30 = 30 min de lunch seulement', 'number'],
+    [37, 'Charge par quart (min)',    0,   '0 = schedule auto · ex: 30 = 30 min de lunch seulement', 'number'],
+[38, 'Charging pattern',    'Regular', 'Regular = standard · Honda = 2×9.5h Honda site schedule', 'dropdown:Regular,Honda'],
 
-    // ── Notes ─────────────────────────────────────────────────────────────────
-    [38, '── OPTIONAL ──',           '',                   '',                                                    'section'],
-    [39, 'Notes',                    '',                    'Will appear in LOGS — e.g. [CUSTOM BATTERY] EVE 230Ah', 'text'],
-    [40, 'Gmail thread URL',         '',                    'Paste Gmail URL to reply in existing thread — leave blank for standalone draft', 'text'],
+// ── Notes ─────────────────────────────────────────────────────────────────
+[39, '── OPTIONAL ──',           '',   '',                                                    'section'],
+[40, 'Notes',                    '',   'Will appear in LOGS — e.g. [CUSTOM BATTERY] EVE 230Ah', 'text'],
+[41, 'Gmail thread URL',         '',   'Paste Gmail URL to reply in existing thread — leave blank for standalone draft', 'text'],
   ];
   rows.forEach(function(r) {
     var row = r[0], label = r[1], def = r[2], hint = r[3], type = r[4];
@@ -141,7 +142,7 @@ function _createManualSimSheet(ss) {
   });
 
   // Run button hint
-  sheet.getRange('A41:C41').merge()
+  sheet.getRange('A42:C42').merge()
     .setValue('▶  When ready: Velox menu → Run Manual Simulation')
     .setFontSize(11).setFontWeight('bold')
     .setBackground('#66BFD4').setFontColor('#18202A')
@@ -196,13 +197,14 @@ function _readManualSimParams() {
     shifts:                num(30) || 1,
     shift_duration:        num(31) || 8,
     use_type:              cell(32) || 'average',
-    shift_start_hour:      num(33) || 7,
+    shift_start_hour:      cell(33) !== '' ? num(33) : 7,
     heating_battery:                     cell(34).toUpperCase() === 'YES',
     ip54_charger:                        cell(35).toUpperCase() === 'YES',
     heating_option:                      cell(36).toUpperCase() === 'YES',
     stated_charge_minutes_per_shift_raw: num(37),
-    notes:                               cell(39),
-    gmail_thread_url:                    cell(40),
+    charging_pattern:                    cell(38) || 'Regular',
+    notes:                               cell(40),
+    gmail_thread_url:                    cell(41),
   };
 }
 
@@ -482,7 +484,7 @@ function runManualSim() {
       // If that failed, try extracting from URL and using as thread ID
       if (!manualThreadId) {
         // Try popout URL format: th=%23thread-f%3ANUMERICID
-        var popoutMatch = rawThreadVal.match(/th=%23thread-f%3A(\d+)/);
+        var popoutMatch = rawThreadVal.match(/th=%23thread-f(?:%3A|:)(\d+)/i);
         if (popoutMatch) {
           try {
             var t3 = GmailApp.getThreadById(popoutMatch[1]);
@@ -584,6 +586,34 @@ function runManualSim() {
     email_subject:         'Manual Sim — ' + p.forklift_manufacturer + ' ' + p.forklift_model,
     gmail_thread_id:       manualThreadId,
   };
+  // ── HONDA OVERRIDE ──────────────────────────────────────────────────────────
+  if (p.charging_pattern === 'Honda') {
+    fullParams.charging_pattern           = 'Honda';
+    fullParams.shifts                     = 2;
+    fullParams.shift_start_hour           = 6.5;
+    fullParams.shift_duration             = 9.5;
+    fullParams.honda_charge_per_shift_min = 62;
+    plan.shifts = 2; plan.shift_duration = 9.5; plan.shift_start_hour = 6.5;
+    p.shifts = 2; p.shift_duration = 9.5; p.shift_start_hour = 6.5; p.shift_duration_h = 9.5;
+    if (plan2) { plan2.shifts = 2; plan2.shift_duration = 9.5; plan2.shift_start_hour = 6.5; }
+    if (plan3) { plan3.shifts = 2; plan3.shift_duration = 9.5; plan3.shift_start_hour = 6.5; }
+      plan.sim_start_time = '6:30 AM';
+      if (plan2) { plan2.sim_start_time = '6:30 AM'; }
+      if (plan3) { plan3.sim_start_time = '6:30 AM'; }
+    chargingEvents = [
+      { start_day: 1, start_time: '8:30 AM',  end_day: 1, end_time: '8:42 AM',  type: 'opportunity', label: 'Shift 1 Break' },
+      { start_day: 1, start_time: '10:30 AM', end_day: 1, end_time: '11:00 AM', type: 'opportunity', label: 'Shift 1 Lunch' },
+      { start_day: 1, start_time: '1:00 PM',  end_day: 1, end_time: '1:10 PM',  type: 'opportunity', label: 'Shift 1 Break' },
+      { start_day: 1, start_time: '3:00 PM',  end_day: 1, end_time: '3:10 PM',  type: 'opportunity', label: 'Shift 1 Break' },
+      { start_day: 1, start_time: '4:00 PM',  end_day: 1, end_time: '4:30 PM',  type: 'opportunity', label: 'Shift Change'  },
+      { start_day: 1, start_time: '6:30 PM',  end_day: 1, end_time: '6:42 PM',  type: 'opportunity', label: 'Shift 2 Break' },
+      { start_day: 1, start_time: '8:30 PM',  end_day: 1, end_time: '9:00 PM',  type: 'opportunity', label: 'Shift 2 Lunch' },
+      { start_day: 1, start_time: '11:00 PM', end_day: 1, end_time: '11:10 PM', type: 'opportunity', label: 'Shift 2 Break' },
+      { start_day: 2, start_time: '1:00 AM',  end_day: 2, end_time: '1:10 AM',  type: 'opportunity', label: 'Shift 2 Break' },
+      { start_day: 2, start_time: '2:00 AM',  end_day: 2, end_time: '6:30 AM',  type: 'post_shift',  label: 'End of Shifts' },
+    ];
+  }
+  // ── END HONDA OVERRIDE ──────────────────────────────────────────────────────
 
   // ── 10. Run simulations ───────────────────────────────────────────────────
   var sim1 = runOnePlan(plan, 1, eboxLabel);
@@ -599,6 +629,7 @@ function runManualSim() {
     var sim3 = runOnePlan(plan3, 3, eboxLabel3);
     if (sim3) allSimResults.push(sim3);
   }
+
 
   // Determine overall status from all sims
   var anyViable = allSimResults.filter(function(s) { return s.passed; }).length;

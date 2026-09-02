@@ -331,7 +331,7 @@ dataSheet.getRange('J8').setValue(existingEff > 0 ? existingEff : 0.80);
   dataSheet.getRange('J13').setValue(24);
   dataSheet.getRange('J14').setValue(1);
   dataSheet.getRange('J15').setValue(20);
-  dataSheet.getRange('J16').setValue('12:00 AM');
+    dataSheet.getRange('J16').setValue(params.sim_start_time || '12:00 AM');
   dataSheet.getRange('B4:G13').clearContent();
   const events = params.charging_events;
   for (let i = 0; i < events.length; i++) {
@@ -741,6 +741,11 @@ function meetsMinWorkThreshold(workMinutes, shifts, batteryType, shiftDuration) 
     }
   }
 
+  if (dur === 10) {
+    if (shifts === 1) return workMinutes >= 420;
+    if (shifts === 2) return workMinutes >= 750;
+  }
+
   if (shifts === 3) return workMinutes >= 900;    // 5h00 per shift × 3 = 15h00 — same for Flex and Plus
   if (shifts === 1) return workMinutes >= 360;    // 6h00
   if (shifts === 2) return workMinutes >= 660;    // 5h30 per shift × 2 = 11h00
@@ -1079,6 +1084,11 @@ function calculateWorkHours(chargingEvents, shifts, truckEfficiency, shiftDurati
   } else if (shifts === 2 && dur === 12) {
     shiftWindows.push({ start: 0,     end: 12*60, name: 'S1' });
     shiftWindows.push({ start: 12*60, end: 24*60, name: 'S2' });
+  } else if (shifts === 1 && dur === 10) {
+    shiftWindows.push({ start: startMin,         end: startMin + 10*60, name: 'S1' });
+  } else if (shifts === 2 && dur === 10) {
+    shiftWindows.push({ start: startMin,         end: startMin + 10*60, name: 'S1' });
+    shiftWindows.push({ start: startMin + 10*60, end: startMin + 20*60, name: 'S2' });
   } else {
     shiftWindows.push({ start: 0,     end: 8*60,  name: 'S1' });
     shiftWindows.push({ start: 8*60,  end: 16*60, name: 'S2' });
@@ -1247,6 +1257,51 @@ function buildChargingEvents(shifts, shiftDuration, customChargeTimes, statedMin
     ];
   }
 
+  if (shifts === 1 && dur === 10) {
+    var sh10_1 = (shiftStartHour !== undefined && shiftStartHour !== null) ? shiftStartHour : 7;
+    var toTS_1x10 = function(h, extraMins) {
+      var totalMins = h * 60 + (extraMins || 0);
+      var hh = Math.floor(totalMins / 60) % 24;
+      var mm = totalMins % 60;
+      var mmStr = mm < 10 ? '0' + mm : '' + mm;
+      if (hh === 0)  return '12:' + mmStr + ' AM';
+      if (hh === 12) return '12:' + mmStr + ' PM';
+      if (hh < 12)   return hh + ':' + mmStr + ' AM';
+      return (hh - 12) + ':' + mmStr + ' PM';
+    };
+    return [
+      { start_day: 1, start_time: '12:00 AM',                  end_day: 1, end_time: toTS_1x10(sh10_1),          label: 'Pre-Shift Charge' },
+      { start_day: 1, start_time: toTS_1x10(sh10_1 + 2, 30),  end_day: 1, end_time: toTS_1x10(sh10_1 + 2, 45), label: 'S1 Break' },
+      { start_day: 1, start_time: toTS_1x10(sh10_1 + 6),      end_day: 1, end_time: toTS_1x10(sh10_1 + 6, 30), label: 'S1 Lunch' },
+      { start_day: 1, start_time: toTS_1x10(sh10_1 + 8, 30),  end_day: 1, end_time: toTS_1x10(sh10_1 + 8, 45), label: 'S1 Break' },
+      { start_day: 1, start_time: toTS_1x10(sh10_1 + 10),     end_day: 1, end_time: '11:59 PM',                 label: 'Overnight Charge' }
+    ];
+  }
+
+  if (shifts === 2 && dur === 10) {
+    var sh10_2 = (shiftStartHour !== undefined && shiftStartHour !== null) ? shiftStartHour : 3;
+    var toTS_2x10 = function(h, extraMins) {
+      var totalMins = h * 60 + (extraMins || 0);
+      var hh = Math.floor(totalMins / 60) % 24;
+      var mm = totalMins % 60;
+      var mmStr = mm < 10 ? '0' + mm : '' + mm;
+      if (hh === 0)  return '12:' + mmStr + ' AM';
+      if (hh === 12) return '12:' + mmStr + ' PM';
+      if (hh < 12)   return hh + ':' + mmStr + ' AM';
+      return (hh - 12) + ':' + mmStr + ' PM';
+    };
+    return [
+      { start_day: 1, start_time: '12:00 AM',                   end_day: 1, end_time: toTS_2x10(sh10_2),           label: 'Pre-Shift Charge' },
+      { start_day: 1, start_time: toTS_2x10(sh10_2 + 2, 30),   end_day: 1, end_time: toTS_2x10(sh10_2 + 2, 45),  label: 'S1 Break' },
+      { start_day: 1, start_time: toTS_2x10(sh10_2 + 6),       end_day: 1, end_time: toTS_2x10(sh10_2 + 6, 30),  label: 'S1 Lunch' },
+      { start_day: 1, start_time: toTS_2x10(sh10_2 + 8, 30),   end_day: 1, end_time: toTS_2x10(sh10_2 + 8, 45),  label: 'S1 Break' },
+      { start_day: 1, start_time: toTS_2x10(sh10_2 + 12, 30),  end_day: 1, end_time: toTS_2x10(sh10_2 + 12, 45), label: 'S2 Break' },
+      { start_day: 1, start_time: toTS_2x10(sh10_2 + 16),      end_day: 1, end_time: toTS_2x10(sh10_2 + 16, 30), label: 'S2 Dinner' },
+      { start_day: 1, start_time: toTS_2x10(sh10_2 + 18, 30),  end_day: 1, end_time: toTS_2x10(sh10_2 + 18, 45), label: 'S2 Break' },
+      { start_day: 1, start_time: toTS_2x10(sh10_2 + 20),      end_day: 1, end_time: '11:59 PM',                  label: 'Post-Shift Charge' }
+    ];
+  }
+
   // 3-shift 8h
   return [
     { start_day: 1, start_time: '2:00 AM',  end_day: 1, end_time: '2:15 AM',  label: 'S1 Break' },
@@ -1363,7 +1418,6 @@ function readAllSOC() {
   const socValues    = formulaSheet.getRange('L2:L1442').getValues();
   return socValues.map(function(r) { return Number(r[0]); });
 }
-
 function analyzeSOC(socArray, shifts, shiftDuration) {
   const dur = shiftDuration || 8;
   let minSOC = 100;
@@ -1414,7 +1468,8 @@ function runSingleSim(plan, chargingEvents, truckEfficiency) {
     shift1_label:     plan.shift1_label || '',
     shift2_label:     plan.shift2_label || '',
     shift3_label:     plan.shift3_label || '',
-    charging_events:  chargingEvents
+      sim_start_time:   plan.sim_start_time || null,
+    charging_events:  chargingEvents,
   };
   writeSimulationToSheet(simParams);
   const results   = readSimulationResults();

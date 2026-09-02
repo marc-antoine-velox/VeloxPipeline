@@ -534,9 +534,11 @@ function _htmlConclusionSlide(entry, params, simNum, isEN) {
   const perShift = h_ + 'h' + (m_ < 10 ? '0' : '') + m_;
   const annual   = Math.round(s * hps * 5 * 52).toLocaleString('en-CA');
 
-  // Charge minutes from events
+  // Charge minutes — prefer pre-stored value (set by Gemini extraction or Honda override)
   let chargeMin = 0;
-  if (entry.chargingEvents && entry.chargingEvents.length > 0) {
+  if (entry.chargeMinPerShift) {
+    chargeMin = entry.chargeMinPerShift;
+  } else if (entry.chargingEvents && entry.chargingEvents.length > 0) {
     const shiftLabels = ['s1', 's2', 's3'];
     let totalPerShift = 0;
     let shiftsFound = new Set();
@@ -555,7 +557,7 @@ function _htmlConclusionSlide(entry, params, simNum, isEN) {
     const divisor = shiftsFound.size > 0 ? shiftsFound.size : (entry.shifts || 1);
     chargeMin = Math.round(totalPerShift / divisor);
   } else {
-    chargeMin = entry.chargeMinPerShift || 60;
+    chargeMin = 60;
   }
 
   const statCards = [
@@ -708,9 +710,25 @@ function _htmlChargeColumns(entry, isEN) {
 // CONCLUSION TEXT
 // ============================================================
 function _htmlConclusionText(entry, params, isEN) {
+  // ── HONDA CONCLUSION ────────────────────────────────────────────────────────
+  if (params && params.charging_pattern === 'Honda') {
+    var _hb = function(txt) { return '<strong style="color:#fff;">' + txt + '</strong>'; };
+    if (isEN) {
+      return 'Honda site: ' + _hb('2 shifts') + ' — Shift 1 ' + _hb('6:30AM → 4:00PM') +
+             ', Shift 2 ' + _hb('4:30PM → 2:00AM') + '.<br>' +
+             _hb(entry.chargeMinPerShift + ' min') + ' of charging per shift (breaks &amp; lunch).' +
+             '<br>Minimum ' + _hb(entry.chargerAmps + 'A') + ' charger required.';
+    } else {
+      return 'Site Honda : ' + _hb('2 quarts') + ' — Quart 1 ' + _hb('6h30 → 16h00') +
+             ', Quart 2 ' + _hb('16h30 → 2h00') + '.<br>' +
+             _hb(entry.chargeMinPerShift + ' min') + ' de charge par quart (pauses et repas).' +
+             '<br>Chargeur minimum ' + _hb(entry.chargerAmps + 'A') + ' requis.';
+    }
+  }
+  // ── END HONDA CONCLUSION ─────────────────────────────────────────────────────
   const s      = entry.shifts || 1;
   const dur    = entry.shift_duration || 8;
- let startH = 7; // fallback
+ let startH = 0; // fallback
 
   // 3-shift and 2x12h operations always start at midnight
   const is24h = (entry.shifts === 3 && (entry.shift_duration || 8) === 8) ||
@@ -794,15 +812,17 @@ function _htmlTimelineSVG(entry, isEN) {
   const events      = entry.chargingEvents || [];
 
   // Parse charge segments from actual events
-  const chargeSegs = events.map(function(e) {
-    let s = _htmlTimeToFloat(e.start_time);
-    let en = _htmlTimeToFloat(e.end_time);
-    if (en <= s) en = 24;
-    return { start: s, end: en };
-  }).filter(function(seg) {
-    // Exclude pre-shift and overnight from timeline charge segments
-    // to avoid misrepresenting non-working hours as "charge" on the bars
-    return true; // keep all — the idle gap logic handles non-shift hours
+  const chargeSegs = [];
+  events.forEach(function(e) {
+    var s = _htmlTimeToFloat(e.start_time);
+    var en = _htmlTimeToFloat(e.end_time);
+    if (en <= s) {
+      // Overnight charge: split across midnight into two segments
+      chargeSegs.push({ start: s, end: 24 });
+      chargeSegs.push({ start: 0, end: en });
+    } else {
+      chargeSegs.push({ start: s, end: en });
+    }
   });
 
   // Build ALL shift windows across 24h
@@ -872,7 +892,8 @@ function _htmlTimelineSVG(entry, isEN) {
 
   function segsToRects(segs, rowY, color) {
     return segs.map(function(seg) {
-      const sx = trackX + (seg.start / 24) * trackW;
+      const rotS = ((seg.start + 48) % 24);
+      const sx = trackX + (rotS / 24) * trackW;
       const sw = Math.max(((seg.end - seg.start) / 24) * trackW, 0.5);
       return '<rect x="' + sx.toFixed(1) + '" y="' + (rowY + 1) + '" width="' + sw.toFixed(1) +
              '" height="11" fill="' + color + '" rx="1"/>';
@@ -899,17 +920,19 @@ function _htmlTimelineSVG(entry, isEN) {
   svg += '<line x1="' + trackX + '" y1="50" x2="' + (trackX + trackW) + '" y2="50" ' +
          'stroke="rgba(255,255,255,0.1)" stroke-width="0.5"/>';
 
-  // Hour labels
-  const hours = [12,1,2,3,4,5,6,7,8,9,10,11,12,1,2,3,4,5,6,7,8,9,10,11];
-  hours.forEach(function(lbl, hh) {
-    const lx = trackX + (hh / 24) * trackW;
-    const isMidnight = hh === 0, isNoon = hh === 12;
-    const opacity = (isMidnight || isNoon) ? '1' : '0.7';
+  // Hour labels — midnight-based (12AM at left, 11PM at right)
+  var hlabels = [12,1,2,3,4,5,6,7,8,9,10,11,12,1,2,3,4,5,6,7,8,9,10,11];
+  for (var hh = 0; hh < 24; hh++) {
+    var lx = trackX + (hh / 24) * trackW;
+    var lbl = hlabels[hh];
+    var isMidnight = hh === 0;
+    var isNoon = hh === 12;
+    var lblOpacity = (isMidnight || isNoon) ? '1' : '0.7';
     svg += '<text x="' + lx.toFixed(1) + '" y="56" font-size="5.5" fill="#fff" ' +
-           'text-anchor="middle" font-family="Arial" opacity="' + opacity + '">' + lbl + '</text>';
+           'text-anchor="middle" font-family="Arial" opacity="' + lblOpacity + '">' + lbl + '</text>';
     if (isMidnight) svg += '<text x="' + lx.toFixed(1) + '" y="62" font-size="4.5" fill="#fff" text-anchor="middle" font-family="Arial" opacity="0.5">AM</text>';
     if (isNoon)     svg += '<text x="' + lx.toFixed(1) + '" y="62" font-size="4.5" fill="#fff" text-anchor="middle" font-family="Arial" opacity="0.5">PM</text>';
-  });
+  }
 
   // Legend
   const legItems = [
@@ -1068,12 +1091,16 @@ function _htmlLoadForkliftB64(model, brand) {
       const all = folder.getFiles();
       while (all.hasNext()) {
         const f = all.next();
-        var fBase    = f.getName().replace(/\.[^.]+$/, '');
-        var fNorm    = fBase.toLowerCase().replace(/[^a-z0-9]/g,'');
-        var matchIdx = fNorm.indexOf(modelKey);
-        if (matchIdx >= 0 && !/[a-z0-9]/.test(fNorm[matchIdx + modelKey.length] || ''))
-          return Utilities.base64Encode(f.getBlob().getBytes());
+        const fNorm = f.getName().toLowerCase().replace(/[^a-z0-9]/g,'');
+        Logger.log('Forklift scan: [' + f.getName() + '] norm=[' + fNorm + '] key=[' + modelKey + '] match=' + fNorm.includes(modelKey));
+        if (fNorm.includes(modelKey)) {
+          Logger.log('Forklift MATCHED: ' + f.getName() + ' | mime: ' + f.getMimeType() + ' | size: ' + f.getSize());
+          const bytes = f.getBlob().getBytes();
+          Logger.log('Forklift base64 len: ' + bytes.length);
+          return Utilities.base64Encode(bytes);
+        }
       }
+      Logger.log('Forklift NOT FOUND — modelKey=[' + modelKey + ']');
     }
   } catch(e) { Logger.log('Forklift image error: ' + e.message); }
   return null;
@@ -1149,7 +1176,7 @@ function _htmlBuildSimEntries(allSimResults, allSimScreenshots, params) {
   const schedule    = readChargingSchedule();
   const shiftTimes  = readShiftTimes();
 
-  return toShow.map(function(sim) {
+  var entries = toShow.map(function(sim) {
     const scenarioKey = sim.scenario || 'STANDARD';
     const idx         = sim.screenshotIndex !== undefined
       ? sim.screenshotIndex
@@ -1223,6 +1250,17 @@ let shiftStart = 7;
       single_slot_ah:     sim.single_slot_ah || 0
     };
   });
+  // ── HONDA OVERRIDE (presentation values) ─────────────────────────────────
+  if (params && params.charging_pattern === 'Honda') {
+    entries.forEach(function(e) {
+      e.chargeMinPerShift = params.honda_charge_per_shift_min || 62;
+      e.shifts            = 2;
+      e.shift_start_hour  = 6.5;
+      e.shift_duration    = 9.5;
+    });
+  }
+  // ── END HONDA OVERRIDE ──────────────────────────────────────────────────────
+  return entries;
 }
 
 
@@ -1303,7 +1341,7 @@ function checkImageDimensions() {
   }
 }
 
-function _htmlSOCChart(socArray, chargingEvents) {
+function _htmlSOCChart(socArray, chargingEvents, simStartHour) {
   // ── DIMENSIONS ────────────────────────────────────────────────────────────
   // SVG is 526x313px — matches the chart card exactly (no scaling needed)
   // padL=38 padR=10 padT=46 padB=32 => plot area cW=478 cH=235
@@ -1395,7 +1433,16 @@ function _htmlSOCChart(socArray, chargingEvents) {
   }
 
   // ── X-AXIS: major every 3h, minor every 1h ────────────────────────────────
-  var xMajorLabels = ['12AM','3AM','6AM','9AM','12PM','3PM','6PM','9PM'];
+  var simStart = simStartHour || 0;
+  var xMajorLabels = [];
+  for (var li = 0; li < 8; li++) {
+    var rh = (simStart + li * 3) % 24;
+    var rhF = Math.floor(rh);
+    var rhM = Math.round((rh - rhF) * 60);
+    var rh12 = rhF % 12 === 0 ? 12 : rhF % 12;
+    var per = rhF < 12 ? 'AM' : 'PM';
+    xMajorLabels.push(rh12 + (rhM > 0 ? ':' + (rhM < 10 ? '0' : '') + rhM : '') + per);
+  }
   for (var h = 0; h <= 24; h++) {
     var xh = (padL + (h/24)*cW).toFixed(1);
     if (h % 3 === 0) {
