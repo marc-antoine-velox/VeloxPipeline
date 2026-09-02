@@ -435,7 +435,7 @@ function _htmlSimSlide(entry, params, simNum, isEN) {
 
   // SOC screenshot
   const socHtml = (entry.screenshot && Array.isArray(entry.screenshot))
-    ? _htmlSOCChart(entry.screenshot, entry.chargingEvents || [])
+    ? _htmlSOCChart(entry.screenshot, entry.chargingEvents || [], entry.shift_start_hour || 0)
     : '<div style="color:#8899aa;font-size:11px;font-weight:700;text-align:center;padding-top:40%;">SOC chart unavailable</div>';
 
   const leftLabel  = isEN ? 'Work Simulation' : 'Simulation de Travail';
@@ -811,26 +811,31 @@ function _htmlTimelineSVG(entry, isEN) {
   const efficiency  = (entry.efficiency || 80) / 100;
   const events      = entry.chargingEvents || [];
 
-  // Parse charge segments from actual events
-  const chargeSegs = [];
+  // Detect if schedule wraps past midnight (Honda: 6.5 + 2×9.5 = 25.5 > 24)
+  var spansOvernight = (shiftStart + numShifts * shiftDur) > 24;
+  var axisStart = spansOvernight ? shiftStart : 0;
+
+  // Convert absolute clock hour → axis position (0 = left edge of chart)
+  function toAxis(absHour) {
+    return ((absHour - axisStart) + 48) % 24;
+  }
+
+  // Parse charge segments in axis-relative space
+  var chargeSegs = [];
   events.forEach(function(e) {
-    var s = _htmlTimeToFloat(e.start_time);
-    var en = _htmlTimeToFloat(e.end_time);
-    if (en <= s) {
-      // Overnight charge: split across midnight into two segments
-      chargeSegs.push({ start: s, end: 24 });
-      chargeSegs.push({ start: 0, end: en });
-    } else {
-      chargeSegs.push({ start: s, end: en });
-    }
+    var rawS  = _htmlTimeToFloat(e.start_time);
+    var rawEn = _htmlTimeToFloat(e.end_time);
+    var dur   = rawEn > rawS ? (rawEn - rawS) : (24 - rawS + rawEn);
+    var axisS = toAxis(rawS);
+    chargeSegs.push({ start: axisS, end: axisS + dur });
   });
 
-  // Build ALL shift windows across 24h
-  const allShiftWindows = [];
+  // Build shift windows in axis-relative space
+  var allShiftWindows = [];
   for (var i = 0; i < numShifts; i++) {
-    var start = (shiftStart + i * shiftDur) % 24;
-    var end   = start + shiftDur;
-    allShiftWindows.push({ start: start, end: end });
+    var rawStart = (shiftStart + i * shiftDur) % 24;
+    var axisS    = toAxis(rawStart);
+    allShiftWindows.push({ start: axisS, end: axisS + shiftDur });
   }
 
   // For each shift window, subtract charge events to get non-charge periods
@@ -892,9 +897,8 @@ function _htmlTimelineSVG(entry, isEN) {
 
   function segsToRects(segs, rowY, color) {
     return segs.map(function(seg) {
-      const rotS = ((seg.start + 48) % 24);
-      const sx = trackX + (rotS / 24) * trackW;
-      const sw = Math.max(((seg.end - seg.start) / 24) * trackW, 0.5);
+      var sx = trackX + (seg.start / 24) * trackW;
+      var sw = Math.max(((seg.end - seg.start) / 24) * trackW, 0.5);
       return '<rect x="' + sx.toFixed(1) + '" y="' + (rowY + 1) + '" width="' + sw.toFixed(1) +
              '" height="11" fill="' + color + '" rx="1"/>';
     }).join('');
@@ -920,18 +924,21 @@ function _htmlTimelineSVG(entry, isEN) {
   svg += '<line x1="' + trackX + '" y1="50" x2="' + (trackX + trackW) + '" y2="50" ' +
          'stroke="rgba(255,255,255,0.1)" stroke-width="0.5"/>';
 
-  // Hour labels — midnight-based (12AM at left, 11PM at right)
-  var hlabels = [12,1,2,3,4,5,6,7,8,9,10,11,12,1,2,3,4,5,6,7,8,9,10,11];
-  for (var hh = 0; hh < 24; hh++) {
-    var lx = trackX + (hh / 24) * trackW;
-    var lbl = hlabels[hh];
-    var isMidnight = hh === 0;
-    var isNoon = hh === 12;
-    var lblOpacity = (isMidnight || isNoon) ? '1' : '0.7';
-    svg += '<text x="' + lx.toFixed(1) + '" y="56" font-size="5.5" fill="#fff" ' +
-           'text-anchor="middle" font-family="Arial" opacity="' + lblOpacity + '">' + lbl + '</text>';
-    if (isMidnight) svg += '<text x="' + lx.toFixed(1) + '" y="62" font-size="4.5" fill="#fff" text-anchor="middle" font-family="Arial" opacity="0.5">AM</text>';
-    if (isNoon)     svg += '<text x="' + lx.toFixed(1) + '" y="62" font-size="4.5" fill="#fff" text-anchor="middle" font-family="Arial" opacity="0.5">PM</text>';
+  // Hour labels — axis-relative, starting at axisStart
+  var _firstHour = Math.ceil(axisStart);
+  for (var _hi = 0; _hi < 24; _hi++) {
+    var _labelHour = (_firstHour + _hi) % 24;
+    var _axisPos   = (_firstHour + _hi) - axisStart;
+    if (_axisPos > 24) break;
+    var _lx = trackX + (_axisPos / 24) * trackW;
+    var _lbl = (_labelHour === 0 || _labelHour === 12) ? 12 : (_labelHour < 12 ? _labelHour : _labelHour - 12);
+    var _isMidnight = _labelHour === 0;
+    var _isNoon     = _labelHour === 12;
+    var _lblOpacity = (_isMidnight || _isNoon) ? '1' : '0.7';
+    svg += '<text x="' + _lx.toFixed(1) + '" y="56" font-size="5.5" fill="#fff" ' +
+           'text-anchor="middle" font-family="Arial" opacity="' + _lblOpacity + '">' + _lbl + '</text>';
+    if (_isMidnight) svg += '<text x="' + _lx.toFixed(1) + '" y="62" font-size="4.5" fill="#fff" text-anchor="middle" font-family="Arial" opacity="0.5">AM</text>';
+    if (_isNoon)     svg += '<text x="' + _lx.toFixed(1) + '" y="62" font-size="4.5" fill="#fff" text-anchor="middle" font-family="Arial" opacity="0.5">PM</text>';
   }
 
   // Legend
@@ -1355,6 +1362,13 @@ function _htmlSOCChart(socArray, chargingEvents, simStartHour) {
   function px(min) { return padL + (min / 1439) * cW; }
   // Convert SOC value (0-100) to SVG y coordinate
   function py(val) { return padT + cH - (val / 100) * cH; }
+
+   // ── ROTATE SOC ARRAY so index 0 = shift start (e.g. 6:30 AM for Honda) ──
+  var simStart = simStartHour || 0;
+  var _startMin = Math.round(simStart * 60);
+  if (_startMin > 0 && _startMin < 1440) {
+    socArray = socArray.slice(_startMin).concat(socArray.slice(0, _startMin));
+  }
 
   // ── BUILD SMOOTH PATH FROM REAL SOC ARRAY ────────────────────────────────
   // Sample every 5 minutes (288 points) for performance
