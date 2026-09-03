@@ -36,18 +36,18 @@ function generateCustomBatteryHTML(params, ghostResult) {
     const rows      = layout.rows;
     const grid      = layout.serpentinePath.grid;
 
-    // Scale: depth 10px/inch, width 14px/inch
+    // Scale: depth 6px/inch, width 9px/inch
     const scaleD = 6;
     const scaleW = 9;
 
     // Pack pixel dimensions
-    const packPxDepth = layout.packDepth * scaleD;   // e.g. 6.85×10=68.5
-    const packPxWidth = layout.packWidth * scaleW;   // e.g. 4.24×14=59.4
-    const cellPxWidth = cell.width * scaleW;         // e.g. 2.12×14=29.7
+    const packPxDepth = layout.packDepth * scaleD;
+    const packPxWidth = layout.packWidth * scaleW;
+    const cellPxWidth = cell.width * scaleW;
 
     // Compartment pixel dimensions
-    const compPxDepth = layout.compDepth * scaleD;
-    const compPxWidth = layout.compWidth * scaleW;
+    const compPxDepth    = layout.compDepth * scaleD;
+    const compPxWidth    = layout.compWidth * scaleW;
     const caissonPxDepth = layout.caissonDepth * scaleD;
     const caissonPxWidth = layout.caissonWidth * scaleW;
     const clearancePxWidth = (layout.compWidth - layout.caissonWidth) / 2 * scaleW;
@@ -57,29 +57,27 @@ function generateCustomBatteryHTML(params, ghostResult) {
     const gridPxWidth = cols * packPxWidth;
 
     // Layout zones (y positions)
-    const titleY    = 14;
-    const pathLabelY = 30;  // #last→#first label
+    const titleY     = 14;
     const colLabelY  = 48;  // col direction labels
-    const arrowCurveY = 56; // top arrow curve
     const compStartY = 70;  // compartment top edge
     const compStartX = 70;  // compartment left edge
     const caissonStartX = compStartX + clearancePxWidth;
-    const caissonStartY = compStartY + 4; // 0.39" depth clearance ×10
+    const caissonStartY = compStartY + 4; // small top clearance in SVG
 
     // Pack grid starts at caisson interior
     const gridStartX = caissonStartX;
     const gridStartY = caissonStartY;
 
     // BMS zone
-    const bmsStartY  = gridStartY + gridPxDepth;
-    const bmsEndY    = caissonStartY + caissonPxDepth;
-    const bmsMidY    = bmsStartY + (bmsEndY - bmsStartY) / 2;
+    const bmsStartY = gridStartY + gridPxDepth;
+    const bmsEndY   = caissonStartY + caissonPxDepth;
+    const bmsMidY   = bmsStartY + (bmsEndY - bmsStartY) / 2;
 
     // Right side annotations start x
     const annoX = compStartX + compPxWidth + 20;
 
     // Total SVG height
-    const bottomAnnotationsHeight = 180; // space for bottom dim lines
+    const bottomAnnotationsHeight = 180;
     const svgHeight = compStartY + compPxDepth + bottomAnnotationsHeight + 40;
 
     // Color scheme per column (cycle through 3)
@@ -133,56 +131,59 @@ function generateCustomBatteryHTML(params, ghostResult) {
                    ' ' + colDirectionLabel(c) + '</text>';
     }
 
-    // Build serpentine arrows
-    // Downward cols: arrow on left edge. Upward cols: arrow on right edge of prev col.
+    // ── Build serpentine arrows ────────────────────────────────────────────
     var arrows = '';
-    // Col 1 down arrow
+
+    // Col 1 down arrow (always goes top→bottom, placed at left edge of grid)
     const col1ArrowX = gridStartX - 12;
     arrows += '<line x1="' + col1ArrowX + '" y1="' + (gridStartY + 20) +
               '" x2="' + col1ArrowX + '" y2="' + (gridStartY + gridPxDepth - 20) +
               '" stroke="#E24B4A" stroke-width="1.5" marker-end="url(#arr)"/>';
 
-    // Bottom connection: last pack of col1 to first pack of col2
-    if (cols > 1) {
-      const p1cx = gridStartX + packPxWidth / 2;
-      const p2cx = gridStartX + packPxWidth + packPxWidth / 2;
-      const bottomY = gridStartY + gridPxDepth + 18;
-      arrows += '<path d="M' + p1cx + ' ' + (gridStartY + gridPxDepth + 4) +
-                ' Q' + p1cx + ' ' + (bottomY + 10) + ' ' + p2cx + ' ' + (bottomY + 10) +
-                '" stroke="#E24B4A" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>';
-      const pathLabelX = (p1cx + p2cx) / 2;
-      const path = layout.serpentinePath.path;
-      const path5 = layout.serpentinePath.path;
-      const pack5 = layout.serpentinePath.grid[0][rows - 1]; // last of col1
-      const pack5next = path5[path5.indexOf(pack5) + 1];     // next in series path
-      arrows += '<text x="' + pathLabelX + '" y="' + (bottomY + 28) +
-                '" font-size="10" text-anchor="middle" fill="#E24B4A"' +
-                ' font-family="Arial,sans-serif">#' + pack5 + ' → #' + pack5next + '</text>';
-    }
+    // General loop for ALL between-column transition curves.
+    // Even tc (0, 2, ...): bottom curve (even col exits at bottom row).
+    // Odd  tc (1, 3, ...): top    curve (odd  col exits at top    row).
+    var seriesPath = layout.serpentinePath.path;
+    for (var tc = 0; tc < cols - 1; tc++) {
+      var isBottom = (tc % 2 === 0);
+      var fromCx   = gridStartX + tc * packPxWidth + packPxWidth / 2;
+      var toCx     = gridStartX + (tc + 1) * packPxWidth + packPxWidth / 2;
 
-    // Top connection col2→col3 (if exists)
-    if (cols > 2) {
-      const p10cx = gridStartX + packPxWidth + packPxWidth / 2;
-      const p11cx = gridStartX + 2 * packPxWidth + packPxWidth / 2;
-      const topY  = gridStartY - 32;
-      arrows += '<path d="M' + p10cx + ' ' + (gridStartY - 4) +
-                ' Q' + p10cx + ' ' + (topY - 10) + ' ' + p11cx + ' ' + (topY - 10) +
-                '" stroke="#E24B4A" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>';
-      const path = layout.serpentinePath.path;
-      const path10 = layout.serpentinePath.path;
-      const pack10 = layout.serpentinePath.grid[1][0]; // top of col2
-      const pack10next = path10[path10.indexOf(pack10) + 1]; // next in series path
-      if (pack10 && pack10next) {
-        arrows += '<text x="' + ((p10cx + p11cx) / 2) + '" y="' + (topY - 20) +
-                  '" font-size="10" text-anchor="middle" fill="#E24B4A"' +
-                  ' font-family="Arial,sans-serif">#' + pack10 + ' → #' + pack10next + '</text>';
+      // Pack that exits this column (last in series for this column)
+      var exitRow  = isBottom ? (rows - 1) : 0;
+      var exitPack = layout.serpentinePath.grid[tc][exitRow];
+      var nextIdx  = seriesPath.indexOf(exitPack) + 1;
+      var nextPack = (nextIdx > 0 && nextIdx < seriesPath.length) ? seriesPath[nextIdx] : null;
+
+      if (isBottom) {
+        // Curve below the pack grid
+        var bY = gridStartY + gridPxDepth + 18;
+        arrows += '<path d="M' + fromCx + ' ' + (gridStartY + gridPxDepth + 4) +
+                  ' Q' + fromCx + ' ' + (bY + 10) + ' ' + toCx + ' ' + (bY + 10) +
+                  '" stroke="#E24B4A" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>';
+        if (exitPack && nextPack) {
+          arrows += '<text x="' + Math.round((fromCx + toCx) / 2) + '" y="' + (bY + 28) +
+                    '" font-size="10" text-anchor="middle" fill="#E24B4A"' +
+                    ' font-family="Arial,sans-serif">#' + exitPack + ' → #' + nextPack + '</text>';
+        }
+      } else {
+        // Curve above the pack grid
+        var tY = gridStartY - 32;
+        arrows += '<path d="M' + fromCx + ' ' + (gridStartY - 4) +
+                  ' Q' + fromCx + ' ' + (tY - 10) + ' ' + toCx + ' ' + (tY - 10) +
+                  '" stroke="#E24B4A" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>';
+        if (exitPack && nextPack) {
+          arrows += '<text x="' + Math.round((fromCx + toCx) / 2) + '" y="' + (tY - 20) +
+                    '" font-size="10" text-anchor="middle" fill="#E24B4A"' +
+                    ' font-family="Arial,sans-serif">#' + exitPack + ' → #' + nextPack + '</text>';
+        }
       }
     }
 
-    // Remaining col down/up arrows
+    // Column direction arrows for cols 2 through N (placed between columns)
     for (var c = 1; c < cols; c++) {
-      const cx = gridStartX + c * packPxWidth + (c % 2 === 0 ? -12 : packPxWidth + 4);
-      const direction = colDirectionLabel(c);
+      var cx = gridStartX + c * packPxWidth + (c % 2 === 0 ? -12 : packPxWidth + 4);
+      var direction = colDirectionLabel(c);
       if (direction === '↓') {
         arrows += '<line x1="' + cx + '" y1="' + (gridStartY + 20) +
                   '" x2="' + cx + '" y2="' + (gridStartY + gridPxDepth - 20) +
@@ -207,16 +208,14 @@ function generateCustomBatteryHTML(params, ghostResult) {
       ' font-family="Arial,sans-serif">BMS + wiring + fill weight</text>' : '';
 
     // Bottom annotations y positions
-    const ba1y = compStartY + compPxDepth + 20;  // line
-    const ba1t = ba1y + 14;                       // label
+    const ba1y = compStartY + compPxDepth + 20;
+    const ba1t = ba1y + 14;
     const ba2y = ba1y + 30;
     const ba2t = ba2y + 14;
     const ba3y = ba2y + 30;
     const ba3t = ba3y + 14;
     const ba4y = ba3y + 30;
     const ba4t = ba4y + 14;
-    const ba5y = ba4y + 28;
-    const ba5t = ba5y + 14;
 
     // Right side annotations y positions
     const ra1y1 = caissonStartY;
@@ -364,8 +363,8 @@ function generateCustomBatteryHTML(params, ghostResult) {
   function buildFrontViewSVG() {
     const cols = layout.cols;
 
-    // Scale: width 14px/inch, height 10px/inch
-   const scaleW = 9;
+    // Scale: width 9px/inch, height 6px/inch
+    const scaleW = 9;
     const scaleH = 6;
 
     const packPxWidth  = layout.packWidth * scaleW;
@@ -417,7 +416,6 @@ function generateCustomBatteryHTML(params, ghostResult) {
                   '" width="' + (Math.round(packPxWidth) + 2) + '" height="' + (Math.round(packPxHeight) + 2) +
                   '" rx="3" fill="none" stroke="' + colors.stroke + '" stroke-width="2"/>';
       // Pack label (col summary)
-      const path = layout.serpentinePath.path;
       const firstPack = Math.min.apply(null, layout.serpentinePath.grid[c].filter(function(p) { return p !== null; }));
       const lastPack  = Math.max.apply(null, layout.serpentinePath.grid[c].filter(function(p) { return p !== null; }));
       packCols += '<text x="' + Math.round(centerX) + '" y="' + Math.round(gridStartY + packPxHeight / 2 - 6) +
@@ -648,6 +646,10 @@ function generateCustomBatteryHTML(params, ghostResult) {
         <td class="label">Width used / spare</td><td class="pass">${f2(layout.widthUsed)}" / ${f2(layout.widthSpare)}" ✓</td></tr>
     <tr><td class="label">Height used / spare</td><td class="pass">${f2(layout.heightUsed)}" / ${f2(layout.heightSpare)}" ✓</td>
         <td class="label">BMS / wiring space</td><td>${f2(layout.depthSpare)}" depth available</td></tr>
+    <tr><td class="label">Cell-wall clearance</td>
+        <td class="pass">${CELL_WALL_CLEARANCE}" on 3 caisson walls ✓ (incl. in used dims)</td>
+        <td class="label">BMS-side clearance</td>
+        <td class="pass">${BMS_SIDE_CLEARANCE}" + ${CELL_WALL_CLEARANCE}" wall = ${BMS_SIDE_CLEARANCE + CELL_WALL_CLEARANCE}" on ${layout.bmsAxis || 'depth'} axis ✓</td></tr>
   </table>
 
   <div class="section-title">Serpentine Wiring Path</div>
