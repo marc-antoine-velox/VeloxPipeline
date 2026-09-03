@@ -65,12 +65,26 @@ const CUSTOM_CELLS = [
   }
 ];
 
-// Clearance margins — derived from Quote's layout sheet
-// Caisson must be slightly smaller than compartment to slide in
-const CAISSON_CLEARANCE_DEPTH = 0.39;  // inches removed from depth
-const CAISSON_CLEARANCE_WIDTH = 2.65;  // inches removed from width (total both sides)
-// Height: no clearance — cells never reach the top of the compartment
-const PACK_DIVIDER_THICKNESS  = 0.0625; // 1/16" plastic isolation sheet around each pack (360°)
+// ─────────────────────────────────────────────────────────────────────────────
+// CLEARANCE CONSTANTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// External clearances — compartment opening → outside of Ebox (caisson)
+const CAISSON_CLEARANCE_DEPTH = 0.39;   // inches removed from depth (front/back slide-in)
+const CAISSON_CLEARANCE_WIDTH = 0.75;   // inches removed from width (total both sides)
+// Height: no external clearance — cells never reach the top of the compartment
+
+// Internal clearances — inside caisson wall → cells
+const PACK_DIVIDER_THICKNESS  = 0.0625; // 1/16" plastic isolation sheet between packs (360°)
+const CELL_WALL_CLEARANCE     = 0.125;  // min gap between cells and caisson wall — 3 sides
+const BMS_SIDE_CLEARANCE      = 5.0;    // reserved for BMS + controls — 4th side only
+// Total on BMS side = BMS_SIDE_CLEARANCE + CELL_WALL_CLEARANCE = 5.125"
+// BMS can be on either the depth axis or width axis (technician door orientation varies by forklift)
+
+// Vertical clearances — above cells to top of Ebox
+const HEIGHT_CLEARANCE_ABOVE_CELLS = 8.37; // min vertical space above cells (wiring, terminals, lid)
+const BALLAST_HEIGHT_ABOVE_CELLS   = 0;    // TODO: fill in when ballast plate height is known
+// Total height consumed above cells = HEIGHT_CLEARANCE_ABOVE_CELLS + BALLAST_HEIGHT_ABOVE_CELLS
 
 // ── Custom Ah tiers per voltage ───────────────────────────────────────────
 // Each tier maps to a specific cell type via CUSTOM_CELLS validAh lists.
@@ -92,10 +106,10 @@ const CUSTOM_AH_TIERS_BY_VOLTAGE = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CELLS_PER_PACK = {
-  'EVE_230':  { 450: 2, 700: 4, 900: 4 },
+  'EVE_230':  { 450: 2, 700: 3, 900: 4 },
   'EVE_280':  { 280: 1, 550: 2 },
   'CALB_163': { 320: 2, 500: 3, 650: 4, 800: 5, 1000: 7 },
-  'CALB_230': { 200: 1, 450: 2, 700: 4, 900: 4 }
+  'CALB_230': { 200: 1, 450: 2, 700: 3, 900: 4 }
 };
 
 function getCellsPerPack(cellKey, targetAh) {
@@ -110,8 +124,10 @@ function getCellsPerPack(cellKey, targetAh) {
 // MAIN ENTRY POINT
 // Given compartment dimensions, voltage, and target Ah:
 // → tries EVE cells first, then CALB
+// → tries BMS on depth axis first, then width axis
 // → finds best serpentine layout that fits
-// → returns layout object or null if nothing fits
+// → returns layout object (with feasible:true) on success
+// → returns { feasible:false, attempts:[...] } with per-cell details on failure
 // ─────────────────────────────────────────────────────────────────────────────
 
 function calculateCustomBattery(compartment, voltage, targetAh) {
@@ -138,6 +154,33 @@ function calculateCustomBattery(compartment, voltage, targetAh) {
   // Number of cell-packs in series for this voltage
   const seriesPacks = Math.round(voltage / 3.2);
 
+  // BMS orientation configs — try depth axis first, then width axis.
+  // BMS side reserves: CELL_WALL_CLEARANCE (gap) + BMS_SIDE_CLEARANCE (BMS + controls) + CELL_WALL_CLEARANCE (gap)
+  // The other 3 sides each get CELL_WALL_CLEARANCE only.
+  // Pack dividers fill the remaining space between packs (PACK_DIVIDER_THICKNESS on all sides).
+  //
+  // totalDepthReserved / totalWidthReserved = wall clearances + 1 leading divider on that axis
+  // (mirrors the formula: available = caisson - reserved; n = floor(available / (packDim + divider)))
+  var ORIENTATION_CONFIGS = [
+    {
+      bmsAxis:            'depth',
+      // Depth axis has the BMS side + opposite wall; width axis has two plain walls
+      totalDepthReserved: CELL_WALL_CLEARANCE + BMS_SIDE_CLEARANCE + CELL_WALL_CLEARANCE + PACK_DIVIDER_THICKNESS,
+      totalWidthReserved: 2 * CELL_WALL_CLEARANCE + PACK_DIVIDER_THICKNESS,
+      // Wall-only portions (no divider) — used in depthUsed / widthUsed formulas
+      depthWallsTotal:    CELL_WALL_CLEARANCE + BMS_SIDE_CLEARANCE + CELL_WALL_CLEARANCE,
+      widthWallsTotal:    2 * CELL_WALL_CLEARANCE
+    },
+    {
+      bmsAxis:            'width',
+      // Width axis has the BMS side + opposite wall; depth axis has two plain walls
+      totalDepthReserved: 2 * CELL_WALL_CLEARANCE + PACK_DIVIDER_THICKNESS,
+      totalWidthReserved: CELL_WALL_CLEARANCE + BMS_SIDE_CLEARANCE + CELL_WALL_CLEARANCE + PACK_DIVIDER_THICKNESS,
+      depthWallsTotal:    2 * CELL_WALL_CLEARANCE,
+      widthWallsTotal:    CELL_WALL_CLEARANCE + BMS_SIDE_CLEARANCE + CELL_WALL_CLEARANCE
+    }
+  ];
+
   // Try EVE first (preferred:true), then CALB
   const orderedCells = CUSTOM_CELLS.slice().sort(function(a, b) {
     if (a.preferred && !b.preferred) return -1;
@@ -145,136 +188,217 @@ function calculateCustomBattery(compartment, voltage, targetAh) {
     return 0;
   });
 
+  // Collect per-cell attempt details for failure reporting
+  var attempts = [];
+
   for (var i = 0; i < orderedCells.length; i++) {
     const cell = orderedCells[i];
+
+    // Start building attempt record for this cell
+    var attempt = {
+      cellKey:      cell.key,
+      cellName:     cell.name,
+      cellsPerPack: null,
+      packAhIn:     null,
+      packWidthIn:  null,
+      packDepthIn:  null,   // pack depth (= cell depth, all cells share same depth)
+      packHeightIn: null,   // pack height (= cell height, cells stand upright)
+      maxCols:      null,
+      maxRows:      null,
+      maxPacks:     null,
+      seriesNeeded: seriesPacks,
+      reason:       null
+    };
 
     // Skip if this cell type is not valid for targetAh
     if (cell.validAh.indexOf(targetAh) === -1) {
       Logger.log('  ' + cell.name + ': not valid for ' + targetAh + 'Ah — skipping');
+      attempt.reason = 'Cellule non compatible avec ' + targetAh + 'Ah';
+      attempts.push(attempt);
       continue;
     }
 
-   // Cells per pack — looked up from fixed table, not calculated
+    // Cells per pack — looked up from fixed table, not calculated
     // Math.ceil is wrong for CALB 163Ah: ceil(500/163)=4 but correct answer is 3
     const cellsPerPack = getCellsPerPack(cell.key, targetAh);
     if (cellsPerPack === null) {
       Logger.log('  ' + cell.name + ': no cellsPerPack defined for ' + targetAh + 'Ah — skipping');
+      attempt.reason = 'cellsPerPack non défini pour ' + targetAh + 'Ah';
+      attempts.push(attempt);
       continue;
     }
     const packAh = cellsPerPack * cell.ah;
+
+    attempt.cellsPerPack = cellsPerPack;
+    attempt.packAhIn     = packAh;
 
     // Pack physical dimensions
     const packWidth  = cellsPerPack * cell.width;
     const packDepth  = cell.depth;
     const packHeight = cell.height;
 
+    attempt.packWidthIn  = packWidth;
+    attempt.packDepthIn  = packDepth;   // stored so HTML drawing can render the fail layout
+    attempt.packHeightIn = packHeight;  // stored so front-view SVG can render cell height
+
     Logger.log('  ' + cell.name + ': cellsPerPack=' + cellsPerPack +
                ' packWidth=' + packWidth.toFixed(2) + '"' +
                ' packDepth=' + packDepth.toFixed(2) + '"' +
                ' packHeight=' + packHeight.toFixed(2) + '"');
 
-    // Height check — cells must stand upright within compartment height
-    if (packHeight > compHeight) {
-      Logger.log('  ' + cell.name + ': height ' + packHeight.toFixed(2) +
-                 '" exceeds compartment ' + compHeight.toFixed(2) + '" — skipping');
+    // Height check — total height consumed (cells + wiring/terminals + ballast placeholder)
+    // must not exceed compartment height
+    const minHeightRequired = packHeight + HEIGHT_CLEARANCE_ABOVE_CELLS + BALLAST_HEIGHT_ABOVE_CELLS;
+    if (minHeightRequired > compHeight) {
+      Logger.log('  ' + cell.name + ': height check failed — cells ' + packHeight.toFixed(2) +
+                 '" + clearance ' + HEIGHT_CLEARANCE_ABOVE_CELLS + '" = ' +
+                 minHeightRequired.toFixed(2) + '" > compartment ' + compHeight.toFixed(2) + '"');
+      attempt.reason = 'Hauteur insuffisante: ' + packHeight.toFixed(2) + '" + ' +
+                       HEIGHT_CLEARANCE_ABOVE_CELLS + '" (câblage/terminaux) = ' +
+                       minHeightRequired.toFixed(2) + '" > ' + compHeight.toFixed(2) + '"';
+      attempts.push(attempt);
       continue;
     }
 
-    // Each pack needs 1/16" isolation on all sides (dividers shared between adjacent packs)
-    // Total width for n cols = n × packWidth + (n+1) × divider
-    // Solve for max cols: n × (packWidth + divider) + divider ≤ available
-    // → n ≤ (available - divider) / (packWidth + divider)
-    const maxPacksDeep = Math.floor((caissonDepth - PACK_DIVIDER_THICKNESS) / (packDepth + PACK_DIVIDER_THICKNESS));
-    const maxPacksWide = Math.floor((caissonWidth - PACK_DIVIDER_THICKNESS) / (packWidth + PACK_DIVIDER_THICKNESS));
+    // Try both BMS orientations — depth axis first, then width axis.
+    // Stop as soon as a valid layout is found.
+    var bestLayout    = null;
+    var bestOrientMax = 0;
 
-    Logger.log('  ' + cell.name + ': maxDeep=' + maxPacksDeep +
-               ' maxWide=' + maxPacksWide +
-               ' seriesNeeded=' + seriesPacks);
+    for (var oi = 0; oi < ORIENTATION_CONFIGS.length; oi++) {
+      if (bestLayout) break;
+      var orient = ORIENTATION_CONFIGS[oi];
 
-    if (maxPacksDeep === 0 || maxPacksWide === 0) {
-      Logger.log('  ' + cell.name + ': pack does not fit in caisson — skipping');
-      continue;
-    }
+      // How many packs fit along each caisson axis?
+      // Formula: n × (packDim + divider) + wallsTotal + divider ≤ caissonDim
+      // → n ≤ (caissonDim - totalReserved) / (packDim + divider)
+      const maxPacksDeep = Math.floor((caissonDepth - orient.totalDepthReserved) / (packDepth + PACK_DIVIDER_THICKNESS));
+      const maxPacksWide = Math.floor((caissonWidth - orient.totalWidthReserved) / (packWidth + PACK_DIVIDER_THICKNESS));
 
-    // Find best column count
-    // Try from max cols down to 1 — prefer more columns (cleaner serpentine)
-    var bestLayout = null;
+      // Track the best capacity seen across both orientations (for failure reporting)
+      if (maxPacksDeep * maxPacksWide > bestOrientMax) {
+        bestOrientMax    = maxPacksDeep * maxPacksWide;
+        attempt.maxCols  = maxPacksWide;
+        attempt.maxRows  = maxPacksDeep;
+        attempt.maxPacks = bestOrientMax;
+      }
 
-    for (var cols = maxPacksWide; cols >= 1; cols--) {
-      const rowsNeeded = Math.ceil(seriesPacks / cols);
+      Logger.log('  ' + cell.name + ' [BMS côté ' + orient.bmsAxis + ']:' +
+                 ' maxDeep=' + maxPacksDeep +
+                 ' maxWide=' + maxPacksWide +
+                 ' seriesNeeded=' + seriesPacks);
 
-      if (rowsNeeded > maxPacksDeep) continue;
+      if (maxPacksDeep === 0 || maxPacksWide === 0) {
+        Logger.log('  ' + cell.name + ' [BMS côté ' + orient.bmsAxis + ']: 0 col ou rangée possible — orientation suivante');
+        continue;
+      }
 
-      // Total space including dividers around all packs
-      const depthUsed  = rowsNeeded * packDepth + (rowsNeeded + 1) * PACK_DIVIDER_THICKNESS;
-      const widthUsed  = cols * packWidth       + (cols + 1)       * PACK_DIVIDER_THICKNESS;
-      const depthSpare = caissonDepth - depthUsed;
-      const widthSpare = caissonWidth - widthUsed;
+      // Find best column count for this orientation
+      // Try from max cols down to 1 — prefer more columns (cleaner serpentine)
+      for (var cols = maxPacksWide; cols >= 1; cols--) {
+        const rowsNeeded = Math.ceil(seriesPacks / cols);
+        if (rowsNeeded > maxPacksDeep) continue;
 
-      bestLayout = {
-        // Cell info
-        cell:         cell,
-        cellKey:      cell.key,
-        cellName:     cell.name,
-        cellType:     cell.type,
+        // Total space consumed including walls and dividers
+        // depthUsed  = wall clearances (depth axis) + rows × packDepth + (rows+1) × divider
+        // widthUsed  = wall clearances (width axis) + cols × packWidth + (cols+1) × divider
+        const depthUsed  = orient.depthWallsTotal + rowsNeeded * packDepth  + (rowsNeeded + 1) * PACK_DIVIDER_THICKNESS;
+        const widthUsed  = orient.widthWallsTotal + cols      * packWidth   + (cols      + 1) * PACK_DIVIDER_THICKNESS;
+        const heightUsed = packHeight + HEIGHT_CLEARANCE_ABOVE_CELLS + BALLAST_HEIGHT_ABOVE_CELLS;
 
-        // Pack info
-        cellsPerPack: cellsPerPack,
-        packAh:       packAh,
-        packWidth:    packWidth,
-        packDepth:    packDepth,
-        packHeight:   packHeight,
+        bestLayout = {
+          // Feasibility flag
+          feasible:      true,
 
-        // Layout
-        cols:         cols,
-        rows:         rowsNeeded,
-        totalPacks:   seriesPacks,
-        totalCells:   seriesPacks * cellsPerPack,
+          // Cell info
+          cell:          cell,
+          cellKey:       cell.key,
+          cellName:      cell.name,
+          cellType:      cell.type,
 
-        // Achieved battery
-        achievedAh:   packAh,
-        voltage:      voltage,
-        targetAh:     targetAh,
+          // Pack info
+          cellsPerPack:  cellsPerPack,
+          packAh:        packAh,
+          packWidth:     packWidth,
+          packDepth:     packDepth,
+          packHeight:    packHeight,
 
-        // Dimensions used vs available
-        caissonDepth:  caissonDepth,
-        caissonWidth:  caissonWidth,
-        compDepth:     compDepth,
-        compWidth:     compWidth,
-        compHeight:    compHeight,
-        depthUsed:     depthUsed,
-        widthUsed:     widthUsed,
-        heightUsed:    packHeight,
-        depthSpare:    depthSpare,
-        widthSpare:    widthSpare,
-        heightSpare:   compHeight - packHeight,
+          // Layout
+          cols:          cols,
+          rows:          rowsNeeded,
+          totalPacks:    seriesPacks,
+          totalCells:    seriesPacks * cellsPerPack,
 
-        // Wiring path (serpentine pack numbers in series order)
-        serpentinePath: buildSerpentinePath(cols, rowsNeeded, seriesPacks)
-      };
+          // Achieved battery
+          achievedAh:    packAh,
+          voltage:       voltage,
+          targetAh:      targetAh,
 
-      // Found a valid layout — take the first one (most columns)
-      break;
+          // BMS orientation used (determines which wall the door is on)
+          bmsAxis:       orient.bmsAxis,
+
+          // Dimensions used vs available
+          caissonDepth:  caissonDepth,
+          caissonWidth:  caissonWidth,
+          compDepth:     compDepth,
+          compWidth:     compWidth,
+          compHeight:    compHeight,
+          depthUsed:     depthUsed,
+          widthUsed:     widthUsed,
+          heightUsed:    heightUsed,
+          depthSpare:    caissonDepth - depthUsed,
+          widthSpare:    caissonWidth - widthUsed,
+          // heightSpare = space above cells after wiring/terminal clearance and ballast placeholder
+          // Positive = room to spare. Negative = impossible (caught by height check above).
+          heightSpare:   compHeight - heightUsed,
+
+          // Wiring path (serpentine pack numbers in series order)
+          serpentinePath: buildSerpentinePath(cols, rowsNeeded, seriesPacks)
+        };
+
+        // Found a valid layout — take the first one (most columns)
+        break;
+      }
     }
 
     if (bestLayout) {
-      Logger.log('calculateCustomBattery: FOUND — ' + cell.name +
+      Logger.log('calculateCustomBattery: FOUND — ' + bestLayout.cellName +
                  ' | ' + bestLayout.cols + ' cols × ' + bestLayout.rows + ' rows' +
+                 ' | BMS côté ' + bestLayout.bmsAxis +
                  ' | ' + bestLayout.totalCells + ' cells (' +
                  seriesPacks + ' packs × ' + cellsPerPack + ' cells/pack)' +
                  ' | ' + bestLayout.achievedAh + 'Ah @ ' + voltage + 'V' +
-                 ' | depth ' + bestLayout.depthUsed.toFixed(2) + '"/' + caissonDepth.toFixed(2) + '"' +
-                 ' | width ' + bestLayout.widthUsed.toFixed(2) + '"/' + caissonWidth.toFixed(2) + '"' +
-                 ' | height ' + bestLayout.heightUsed.toFixed(2) + '"/' + compHeight.toFixed(2) + '"');
+                 ' | depth ' + bestLayout.depthUsed.toFixed(2) + '"/' + caissonDepth.toFixed(2) +
+                 '" (spare ' + bestLayout.depthSpare.toFixed(2) + '")' +
+                 ' | width ' + bestLayout.widthUsed.toFixed(2) + '"/' + caissonWidth.toFixed(2) +
+                 '" (spare ' + bestLayout.widthSpare.toFixed(2) + '")' +
+                 ' | height spare ' + bestLayout.heightSpare.toFixed(2) + '" au-dessus des cellules (avant poids de ballast)');
       return bestLayout;
     }
 
-    Logger.log('  ' + cell.name + ': no valid col/row arrangement found');
+    // No layout found for this cell — record failure details
+    attempt.maxCols  = attempt.maxCols  || 0;
+    attempt.maxRows  = attempt.maxRows  || 0;
+    attempt.maxPacks = attempt.maxPacks || 0;
+    attempt.reason = 'Arrangement impossible (2 orientations BMS testées): max ' +
+                     attempt.maxPacks + ' packs disponibles, ' + seriesPacks + ' requis';
+    Logger.log('  ' + cell.name + ': ' + attempt.reason);
+    attempts.push(attempt);
   }
 
   Logger.log('calculateCustomBattery: no cell fits — compartment too small for ' +
              targetAh + 'Ah at ' + voltage + 'V');
-  return null;
+  return {
+    feasible:     false,
+    targetAh:     targetAh,
+    voltage:      voltage,
+    compartment:  compartment,
+    caissonDepth: caissonDepth,
+    caissonWidth:  caissonWidth,
+    compHeight:   compHeight,
+    seriesPacks:  seriesPacks,
+    attempts:     attempts
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -342,7 +466,8 @@ function runGhostSims(params, compartment, bestMatch, eboxResult, chargers) {
       targetAh
     );
 
-    if (!layout) {
+    // layout is now an object on failure (feasible:false), never null unless invalid compartment
+    if (!layout || layout.feasible === false) {
       Logger.log('Ghost sim ' + targetAh + 'Ah: no cell fits compartment — skipping');
       continue;
     }
@@ -443,23 +568,28 @@ function testCustomBattery_AMOD() {
   const tiers48 = CUSTOM_AH_TIERS_BY_VOLTAGE[48];
   tiers48.forEach(function(tier) {
     const result = calculateCustomBattery('47.90 x 16.75 x 30.88', 48, tier);
-    if (result) {
+    if (result && result.feasible !== false) {
       Logger.log(tier + 'Ah → ' + result.cellName +
                  ' | achieved=' + result.achievedAh + 'Ah' +
                  ' | standard=' + tier + 'Ah' +
                  ' | ' + result.cols + ' cols × ' + result.rows + ' rows' +
+                 ' | BMS côté ' + result.bmsAxis +
                  ' | ' + result.totalCells + ' cells' +
                  ' | depth ' + result.depthUsed.toFixed(2) + '"/' +
                  result.caissonDepth.toFixed(2) + '"' +
                  ' | width ' + result.widthUsed.toFixed(2) + '"/' +
                  result.caissonWidth.toFixed(2) + '"' +
+                 ' | height spare ' + result.heightSpare.toFixed(2) + '"' +
                  ' | fits=' + (result.depthUsed <= result.caissonDepth &&
                                 result.widthUsed <= result.caissonWidth ? 'YES' : 'NO'));
       if (tier === 450) {
         Logger.log('  Serpentine path: ' + result.serpentinePath.path.join(' → '));
       }
     } else {
-      Logger.log(tier + 'Ah → NO FIT for A-MOD compartment');
+      var reasons = (result && result.attempts) ?
+        result.attempts.map(function(a) { return a.cellName + ': ' + a.reason; }).join('; ') :
+        'compartiment invalide';
+      Logger.log(tier + 'Ah → NO FIT for A-MOD compartment — ' + reasons);
     }
   });
 
@@ -473,13 +603,15 @@ function testCustomBattery_EFG320() {
   const tiers = CUSTOM_AH_TIERS_BY_VOLTAGE[48];
   tiers.forEach(function(tier) {
     const result = calculateCustomBattery(compartment, voltage, tier);
-    if (result) {
+    if (result && result.feasible !== false) {
       Logger.log(tier + 'Ah → ' + result.cellName +
                  ' | achieved=' + result.achievedAh + 'Ah' +
                  ' | ' + result.cols + ' cols × ' + result.rows + ' rows' +
+                 ' | BMS côté ' + result.bmsAxis +
                  ' | ' + result.totalCells + ' cells' +
                  ' | depth ' + result.depthUsed.toFixed(2) + '"/' + result.caissonDepth.toFixed(2) + '"' +
                  ' | width ' + result.widthUsed.toFixed(2) + '"/' + result.caissonWidth.toFixed(2) + '"' +
+                 ' | height spare ' + result.heightSpare.toFixed(2) + '"' +
                  ' | fits=' + (result.depthUsed <= result.caissonDepth && result.widthUsed <= result.caissonWidth ? 'YES' : 'NO'));
     } else {
       Logger.log(tier + 'Ah → NO FIT');

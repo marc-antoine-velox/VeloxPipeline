@@ -18,8 +18,9 @@ function onOpen() {
     { name: 'Check New Emails',        functionName: 'checkForNewSimulations'   },
     { name: 'Process Queue',           functionName: 'checkPendingSimulations'  },
     null, // separator
-    { name: 'Manual Simulation',       functionName: 'openManualSimSheet'       },
-    { name: 'Run Manual Simulation',   functionName: 'runManualSim'             },
+    { name: 'Manual Simulation',       functionName: 'openManualSimSheet'         },
+    { name: 'Run Manual Simulation',   functionName: 'runManualSim'               },
+    { name: 'Add Working Shifts Table',functionName: 'setupWorkingShiftsTable'    },
   ]);
 }
 
@@ -103,7 +104,7 @@ function _createManualSimSheet(ss) {
     [35, 'IP54 charger?',            'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
     [36, 'Heated charger?',          'NO',                  'YES or NO',                                           'dropdown:YES,NO'],
     [37, 'Charge par quart (min)',    0,   '0 = schedule auto · ex: 30 = 30 min de lunch seulement', 'number'],
-[38, 'Charging pattern',    'Regular', 'Regular = standard · Honda = 2×9.5h Honda site schedule', 'dropdown:Regular,Honda'],
+    [38, 'Charging pattern',    'Regular', 'Regular = standard · Honda = 2×9.5h Honda · Manuel = horaire personnalisé (tableau G4:L15)', 'dropdown:Regular,Honda,Manuel'],
 
 // ── Notes ─────────────────────────────────────────────────────────────────
 [39, '── OPTIONAL ──',           '',   '',                                                    'section'],
@@ -147,6 +148,12 @@ function _createManualSimSheet(ss) {
     .setFontSize(11).setFontWeight('bold')
     .setBackground('#66BFD4').setFontColor('#18202A')
     .setHorizontalAlignment('center');
+
+  // ── Manuel charging table (G3:L15) ───────────────────────────────────────
+  _setupManuelTableOnSheet(sheet);
+
+  // ── Working Shifts table (N2:R7) ─────────────────────────────────────────
+  _setupWorkingShiftsTable(sheet);
 
   // Freeze header
   sheet.setFrozenRows(1);
@@ -258,7 +265,11 @@ function runManualSim() {
     'Combo 1: ' + p.battery_ah + 'Ah ' + p.battery_type + ' + ' + p.charger_amps + 'A\n' +
     (hasCombo2 ? 'Combo 2: ' + p.battery_ah_2 + 'Ah ' + p.battery_type_2 + ' + ' + p.charger_amps_2 + 'A\n' : '') +
     (hasCombo3 ? 'Combo 3: ' + p.battery_ah_3 + 'Ah ' + p.battery_type_3 + ' + ' + p.charger_amps_3 + 'A\n' : '') +
-        (p.charging_pattern === 'Honda' ? 'Shifts: 2 × 9.5h (Honda schedule)\n' : 'Shifts: ' + p.shifts + ' × ' + p.shift_duration + 'h\n') +
+        (p.charging_pattern === 'Honda'
+          ? 'Shifts: 2 × 9.5h (Honda schedule)\n'
+          : p.charging_pattern === 'Manuel'
+            ? 'Recharge: Manuel (horaire G4:L15)\n'
+            : 'Shifts: ' + p.shifts + ' × ' + p.shift_duration + 'h\n') +
     'Dealer: ' + p.dealer + '\n\n' +
     'Proceed?',
     ui.ButtonSet.YES_NO
@@ -304,23 +315,24 @@ function runManualSim() {
       var match1 = (eboxResult.compatible_batteries || []).find(function(b) {
         return b.ah === p.battery_ah && b.voltage === p.voltage;
       });
-      eboxLabel = match1 ? match1.ebox : (eboxResult.fitting_eboxes.length > 0 ? eboxResult.fitting_eboxes[0] : 'NO FIT');
+      var _eboxFallback = eboxResult.fitting_eboxes.length > 0 ? 'CUSTOM' : 'NO FIT';
+      eboxLabel = match1 ? match1.ebox : _eboxFallback;
       // Find which ebox fits combo 2
       if (hasCombo2) {
-        var match2 = (eboxResult.compatible_batteries || []).find(function(b) {
-          return b.ah === p.battery_ah_2 && b.voltage === p.voltage;
-        });
-        eboxLabel2 = match2 ? match2.ebox : 'NO FIT';
+      var match2 = (eboxResult.compatible_batteries || []).find(function(b) {
+      return b.ah === p.battery_ah_2 && b.voltage === p.voltage;
+      });
+      eboxLabel2 = match2 ? match2.ebox : _eboxFallback;
       }
-      // Find which ebox fits combo 3
-      if (hasCombo3) {
-        var match3 = (eboxResult.compatible_batteries || []).find(function(b) {
-          return b.ah === p.battery_ah_3 && b.voltage === p.voltage;
-        });
-        eboxLabel3 = match3 ? match3.ebox : 'NO FIT';
-      }
-    }
-  }
+       // Find which ebox fits combo 3
+       if (hasCombo3) {
+      var match3 = (eboxResult.compatible_batteries || []).find(function(b) {
+      return b.ah === p.battery_ah_3 && b.voltage === p.voltage;
+      });
+       eboxLabel3 = match3 ? match3.ebox : _eboxFallback;
+         }
+       }
+     }
 
   var plan2 = null;
   if (hasCombo2) {
@@ -365,7 +377,7 @@ function runManualSim() {
   }
 
   // ── Custom battery feasibility check (after plan2/plan3 exist) ─────────────
-  if (eboxLabel === 'NO FIT' && p.compartment) {
+  if ((eboxLabel === 'NO FIT' || eboxLabel === 'CUSTOM') && p.compartment) {
     var cb1 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah);
     if (cb1) {
       plan.displayBatteryType = 'VeloxCUSTOM';
@@ -375,7 +387,8 @@ function runManualSim() {
       customBatteryLines.push('• Combo 1 — ' + p.battery_ah + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
     }
   }
-  if (hasCombo2 && eboxLabel2 === 'NO FIT' && p.compartment) {
+  if (hasCombo2 && (eboxLabel2 === 'NO FIT' || eboxLabel2 === 'CUSTOM') && p.compartment) {
+
     var cb2 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah_2);
     if (cb2) {
       plan2.displayBatteryType = 'VeloxCUSTOM';
@@ -385,7 +398,7 @@ function runManualSim() {
       customBatteryLines.push('• Combo 2 — ' + p.battery_ah_2 + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
     }
   }
-  if (hasCombo3 && eboxLabel3 === 'NO FIT' && p.compartment) {
+  if (hasCombo3 && (eboxLabel3 === 'NO FIT' || eboxLabel3 === 'CUSTOM') && p.compartment) {
     var cb3 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah_3);
     if (cb3) {
       plan3.displayBatteryType = 'VeloxCUSTOM';
@@ -452,7 +465,7 @@ function runManualSim() {
         results: simRes, soc_over_time: soc, chargingEvents: chargingEvents,
         truck_load: truckLoad,
         label: 'Sim ' + simNum + ' — ' + planObj.battery_ah + 'Ah + ' + planObj.charger_amps + 'A',
-        scenario: 'MANUAL', flag: effFlag || null, simNumber: simNum, screenshotIndex: simNum - 1,
+        scenario: fullParams.scenario || 'MANUAL', flag: effFlag || null, simNumber: simNum, screenshotIndex: simNum - 1,
       };
     } catch(e) {
       ui.alert('❌ Simulation error (Combo ' + simNum + '):\n' + e.message);
@@ -526,11 +539,11 @@ function runManualSim() {
   var autoNoteLines = [];
   var eboxSummaryStr = 'Combo 1 : ' + eboxLabel;
   if (hasCombo2) {
-    var lbl2 = (eboxLabel2 === 'NO FIT' && plan2 && plan2.displayBatteryType === 'VeloxCUSTOM') ? 'NO FIT → CUSTOM' : eboxLabel2;
+    var lbl2 = ((eboxLabel2 === 'NO FIT' || eboxLabel2 === 'CUSTOM') && plan2 && plan2.displayBatteryType === 'VeloxCUSTOM') ? 'CUSTOM → VeloxCUSTOM' : eboxLabel2;
     eboxSummaryStr += ' | Combo 2 : ' + lbl2;
   }
   if (hasCombo3) {
-    var lbl3 = (eboxLabel3 === 'NO FIT' && plan3 && plan3.displayBatteryType === 'VeloxCUSTOM') ? 'NO FIT → CUSTOM' : eboxLabel3;
+    var lbl3 = ((eboxLabel3 === 'NO FIT' || eboxLabel3 === 'CUSTOM') && plan3 && plan3.displayBatteryType === 'VeloxCUSTOM') ? 'CUSTOM → VeloxCUSTOM' : eboxLabel3;
     eboxSummaryStr += ' | Combo 3 : ' + lbl3;
   }
   autoNoteLines.push('EBOX : ' + eboxSummaryStr);
@@ -614,6 +627,68 @@ function runManualSim() {
     ];
   }
   // ── END HONDA OVERRIDE ──────────────────────────────────────────────────────
+
+  // ── MANUEL OVERRIDE ──────────────────────────────────────────────────────────
+  if (p.charging_pattern === 'Manuel') {
+    var manuelEvents = _readManuelEvents();
+    if (!manuelEvents || manuelEvents.length === 0) {
+      ui.alert('❌ Mode Manuel: aucun événement de recharge trouvé dans le tableau (G4:L15).\n' +
+               'Veuillez saisir au moins un événement de recharge avant de lancer la simulation.');
+      return;
+    }
+    chargingEvents = manuelEvents;
+    fullParams.charging_pattern = 'Manuel';
+
+    // ── Derive cycle parameters from the events ──────────────────────────────
+    // This ensures calculateWorkHours() and the Portée timeline both reflect
+    // the real Manuel cycle duration instead of the greyed-out Shifts/Duration rows.
+    var manuelCycleH    = _manuelCycleHours(manuelEvents, p.shift_start_hour);
+    var manuelChargeMin = _manuelTotalChargeMin(manuelEvents);
+    Logger.log('Manuel cycle: ' + manuelCycleH + 'h, total charge: ' + manuelChargeMin + ' min');
+
+    // Embed charge minutes in scenario string so HTMLPresentationGenerator's regex
+    // (/(\d+)min/i) extracts the correct value for "Charge / quart" display.
+    // Must be AFTER manuelChargeMin is computed — JS var hoisting would make it undefined above.
+    fullParams.scenario = 'MANUEL_' + manuelChargeMin + 'min';
+
+    // Override p — used by calculateWorkHours (called inside runOnePlan)
+    p.shifts                          = 1;
+    p.shift_duration                  = manuelCycleH;
+    p.stated_charge_minutes_per_shift = manuelChargeMin;
+
+    // Derive sim_start_time string from shift_start_hour (same approach as Honda override).
+    // Without this, runSingleSim writes midnight to J16 because shift_duration=24 triggers
+    // a 24h-cycle code path that resets the start clock to midnight.
+    var _ssh  = p.shift_start_hour;  // comes from B33 on the Manuel sim sheet
+    var _sh   = Math.floor(_ssh);
+    var _sm   = Math.round((_ssh - _sh) * 60);
+    var _ampm = _sh < 12 ? 'AM' : 'PM';
+    var _h12  = _sh % 12 || 12;
+    var manuelSimStart = _h12 + ':' + (_sm < 10 ? '0' : '') + _sm + ' ' + _ampm;
+
+    // Override plan objects — used by the Portée timeline and runSingleSim (→ J16)
+    plan.shifts         = 1;
+    plan.shift_duration = manuelCycleH;
+    plan.sim_start_time = manuelSimStart;
+    if (plan2) { plan2.shifts = 1; plan2.shift_duration = manuelCycleH; plan2.sim_start_time = manuelSimStart; }
+    if (plan3) { plan3.shifts = 1; plan3.shift_duration = manuelCycleH; plan3.sim_start_time = manuelSimStart; }
+
+    // Override fullParams — written to LOGS/SIM_DB and displayed in the Portée
+    fullParams.shifts                          = 1;
+    fullParams.shift_duration                  = manuelCycleH;
+    fullParams.stated_charge_minutes_per_shift = manuelChargeMin;
+
+    // ── Working Shifts table override (display/logging only) ─────────────────
+    // Reads the "Quarts de travail" table (N4:R7). If filled, replaces fullParams
+    // shifts/shift_duration so the LOGS/filename reflect actual work shifts
+    // instead of the simulation cycle length. Does NOT affect plan or Formula sheet.
+    var _manuelShifts = _readManuelShifts();
+    if (_manuelShifts.length > 0) {
+      fullParams.shifts         = _manuelShifts.length;
+      fullParams.shift_duration = _manuelShifts[0].durationH;
+    }
+  }
+  // ── END MANUEL OVERRIDE ──────────────────────────────────────────────────────
 
   // ── 10. Run simulations ───────────────────────────────────────────────────
   var sim1 = runOnePlan(plan, 1, eboxLabel);
@@ -1000,12 +1075,418 @@ function onEdit(e) {
   if (sheet.getName() !== 'Manual Sim') return;
   if (e.range.getRow() !== 38 || e.range.getColumn() !== 2) return;
 
-  var isHonda = String(e.value || '').trim() === 'Honda';
+  var val       = String(e.value || '').trim();
+  var shouldGrey = (val === 'Honda' || val === 'Manuel');
   [30, 31].forEach(function(row) {
     sheet.getRange(row, 2)
-      .setBackground(isHonda ? '#B0B8C4' : '#F6F8FA')
-      .setFontColor(isHonda ? '#6B7686' : '#000000');
+      .setBackground(shouldGrey ? '#B0B8C4' : '#F6F8FA')
+      .setFontColor(shouldGrey ? '#6B7686' : '#000000');
     sheet.getRange(row, 1)
-      .setFontColor(isHonda ? '#6B7686' : '#000000');
+      .setFontColor(shouldGrey ? '#6B7686' : '#000000');
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _setupManuelTableOnSheet — draws the Manuel charging schedule table at G3:L15
+// Called by _createManualSimSheet for new sheets. For existing sheets, call
+// setupManuelTable() from the Velox menu (add it temporarily if needed).
+// ─────────────────────────────────────────────────────────────────────────────
+function _setupManuelTableOnSheet(sheet) {
+  // ── Column widths for G–L (cols 7–12) ────────────────────────────────────
+  sheet.setColumnWidth(7,  38);  // G — #
+  sheet.setColumnWidth(8,  72);  // H — Start Day
+  sheet.setColumnWidth(9,  90);  // I — Start Time
+  sheet.setColumnWidth(10, 72);  // J — End Day
+  sheet.setColumnWidth(11, 90);  // K — End Time
+  sheet.setColumnWidth(12, 130); // L — Label
+
+  // ── Table title (G2:L2) ───────────────────────────────────────────────────
+  sheet.getRange(2, 7, 1, 6).merge()
+    .setValue('🗓  Horaire Manuel — Mode Manuel uniquement (max 12 événements)')
+    .setFontSize(9).setFontWeight('bold')
+    .setBackground('#3D4859').setFontColor('#66BFD4')
+    .setHorizontalAlignment('center');
+
+  // ── Header row (G3:L3) ────────────────────────────────────────────────────
+  var headers = ['#', 'Start Day', 'Start Time', 'End Day', 'End Time', 'Label'];
+  headers.forEach(function(h, i) {
+    sheet.getRange(3, 7 + i)
+      .setValue(h)
+      .setFontWeight('bold').setFontSize(9)
+      .setBackground('#4C576A').setFontColor('#FFFFFF')
+      .setHorizontalAlignment('center');
+  });
+
+  // ── Day dropdown rule (reused for H and J columns) ────────────────────────
+  var dayRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['1', '2'], true)
+    .setAllowInvalid(false)
+    .build();
+
+  // ── Data rows (G4:L15 — 12 events) ────────────────────────────────────────
+  for (var r = 4; r <= 15; r++) {
+    var rowNum = r - 3; // 1–12
+
+    // # (G) — row number, locked style
+    sheet.getRange(r, 7)
+      .setValue(rowNum)
+      .setBackground('#EEF1F5').setFontColor('#6B7686')
+      .setHorizontalAlignment('center').setFontSize(9);
+
+    // Start Day (H) — dropdown 1/2
+    sheet.getRange(r, 8)
+      .setBackground('#F6F8FA').setFontColor('#000000').setFontSize(9)
+      .setHorizontalAlignment('center')
+      .setDataValidation(dayRule)
+      .setBorder(true, true, true, true, false, false, '#DCE3E9', SpreadsheetApp.BorderStyle.SOLID);
+
+    // Start Time (I) — free text, format hint "H:MM AM/PM"
+    sheet.getRange(r, 9)
+      .setBackground('#F6F8FA').setFontColor('#000000').setFontSize(9)
+      .setNumberFormat('@') // treat as plain text
+      .setHorizontalAlignment('center')
+      .setBorder(true, true, true, true, false, false, '#DCE3E9', SpreadsheetApp.BorderStyle.SOLID);
+
+    // End Day (J) — dropdown 1/2
+    sheet.getRange(r, 10)
+      .setBackground('#F6F8FA').setFontColor('#000000').setFontSize(9)
+      .setHorizontalAlignment('center')
+      .setDataValidation(dayRule)
+      .setBorder(true, true, true, true, false, false, '#DCE3E9', SpreadsheetApp.BorderStyle.SOLID);
+
+    // End Time (K) — free text
+    sheet.getRange(r, 11)
+      .setBackground('#F6F8FA').setFontColor('#000000').setFontSize(9)
+      .setNumberFormat('@')
+      .setHorizontalAlignment('center')
+      .setBorder(true, true, true, true, false, false, '#DCE3E9', SpreadsheetApp.BorderStyle.SOLID);
+
+    // Label (L) — free text, annotation only
+    sheet.getRange(r, 12)
+      .setBackground('#F6F8FA').setFontColor('#6B7686').setFontSize(9)
+      .setFontStyle('italic')
+      .setBorder(true, true, true, true, false, false, '#DCE3E9', SpreadsheetApp.BorderStyle.SOLID);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setupManuelTable — one-time setup helper for existing "Manual Sim" sheets
+// Add temporarily to the Velox menu, run once, then remove if desired.
+// ─────────────────────────────────────────────────────────────────────────────
+function setupManuelTable() {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Manual Sim');
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert('❌ "Manual Sim" sheet not found. Run Velox → Manual Simulation first.');
+    return;
+  }
+  _setupManuelTableOnSheet(sheet);
+  SpreadsheetApp.getUi().alert('✅ Manuel table added at G3:L15 on the Manual Sim sheet.');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _setupWorkingShiftsTable — draws the Working Shifts table at N2:R7.
+// Purely for display/logging — defines actual work shifts so the LOGS entry
+// shows e.g. "2x8h" instead of "1x24h". Does not affect the simulation at all.
+// Called by _createManualSimSheet for new sheets; call setupWorkingShiftsTable()
+// from the Velox menu to add it to an existing sheet.
+// ─────────────────────────────────────────────────────────────────────────────
+function _setupWorkingShiftsTable(sheet) {
+  // Column widths for N–R (cols 14–18)
+  sheet.setColumnWidth(13, 14);  // M — narrow gap between the two tables
+  sheet.setColumnWidth(14, 38);  // N — #
+  sheet.setColumnWidth(15, 72);  // O — Start Day
+  sheet.setColumnWidth(16, 90);  // P — Start Time
+  sheet.setColumnWidth(17, 72);  // Q — End Day
+  sheet.setColumnWidth(18, 90);  // R — End Time
+
+  // Table title (N2:R2)
+  sheet.getRange(2, 14, 1, 5).merge()
+    .setValue('👷  Quarts de travail — Mode Manuel (max 4 quarts)')
+    .setFontSize(9).setFontWeight('bold')
+    .setBackground('#3D4859').setFontColor('#BFD466')
+    .setHorizontalAlignment('center');
+
+  // Header row (N3:R3)
+  var headers = ['#', 'Start Day', 'Start Time', 'End Day', 'End Time'];
+  headers.forEach(function(h, i) {
+    sheet.getRange(3, 14 + i)
+      .setValue(h)
+      .setFontWeight('bold').setFontSize(9)
+      .setBackground('#4C576A').setFontColor('#FFFFFF')
+      .setHorizontalAlignment('center');
+  });
+
+  // Day dropdown rule (1 or 2)
+  var dayRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['1', '2'], true)
+    .setAllowInvalid(false)
+    .build();
+
+  // Data rows (N4:R7 — 4 shifts)
+  for (var r = 4; r <= 7; r++) {
+    var rowNum = r - 3; // 1–4
+
+    // # (N) — row number, locked style
+    sheet.getRange(r, 14)
+      .setValue(rowNum)
+      .setBackground('#EEF1F5').setFontColor('#6B7686')
+      .setHorizontalAlignment('center').setFontSize(9);
+
+    // Start Day (O)
+    sheet.getRange(r, 15)
+      .setBackground('#F6F8FA').setFontColor('#000000').setFontSize(9)
+      .setHorizontalAlignment('center')
+      .setDataValidation(dayRule)
+      .setBorder(true, true, true, true, false, false, '#DCE3E9', SpreadsheetApp.BorderStyle.SOLID);
+
+    // Start Time (P)
+    sheet.getRange(r, 16)
+      .setBackground('#F6F8FA').setFontColor('#000000').setFontSize(9)
+      .setNumberFormat('@')
+      .setHorizontalAlignment('center')
+      .setBorder(true, true, true, true, false, false, '#DCE3E9', SpreadsheetApp.BorderStyle.SOLID);
+
+    // End Day (Q)
+    sheet.getRange(r, 17)
+      .setBackground('#F6F8FA').setFontColor('#000000').setFontSize(9)
+      .setHorizontalAlignment('center')
+      .setDataValidation(dayRule)
+      .setBorder(true, true, true, true, false, false, '#DCE3E9', SpreadsheetApp.BorderStyle.SOLID);
+
+    // End Time (R)
+    sheet.getRange(r, 18)
+      .setBackground('#F6F8FA').setFontColor('#000000').setFontSize(9)
+      .setNumberFormat('@')
+      .setHorizontalAlignment('center')
+      .setBorder(true, true, true, true, false, false, '#DCE3E9', SpreadsheetApp.BorderStyle.SOLID);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setupWorkingShiftsTable — one-time setup for existing "Manual Sim" sheets.
+// Adds the Working Shifts table at N2:R7. Run from the Velox menu once.
+// ─────────────────────────────────────────────────────────────────────────────
+function setupWorkingShiftsTable() {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Manual Sim');
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert('❌ "Manual Sim" sheet not found.');
+    return;
+  }
+  _setupWorkingShiftsTable(sheet);
+  SpreadsheetApp.getUi().alert('✅ Working Shifts table added at N2:R7 on the Manual Sim sheet.\nFill in your work shift start/end times. Leave empty to keep current behaviour.');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _readManuelShifts — reads N4:R7 (the Working Shifts table) and returns an
+// array of {startDay, startH, startTime, endDay, endH, endTime, durationH}.
+// Returns [] if the table is empty or not present.
+// ─────────────────────────────────────────────────────────────────────────────
+function _readManuelShifts() {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Manual Sim');
+  if (!sheet) return [];
+
+  // N=14, O=15, P=16, Q=17, R=18  →  rows 4–7, cols 14–18, 4 rows × 5 cols
+  var data = sheet.getRange(4, 14, 4, 5).getValues();
+  // data[r][0]=# (N), [1]=startDay (O), [2]=startTime (P), [3]=endDay (Q), [4]=endTime (R)
+
+  var shifts = [];
+  for (var i = 0; i < data.length; i++) {
+    var row      = data[i];
+    var startDay = parseInt(row[1], 10);
+    var startVal = row[2];
+    var endDay   = parseInt(row[3], 10);
+    var endVal   = row[4];
+
+    if (!startVal && startVal !== 0) continue;
+    if (!endVal   && endVal   !== 0) continue;
+
+    var startStr = _formatManuelTime(startVal);
+    var endStr   = _formatManuelTime(endVal);
+    if (!startStr || !endStr) continue;
+
+    if (isNaN(startDay) || startDay < 1) startDay = 1;
+    if (isNaN(endDay)   || endDay   < 1) endDay   = 1;
+    if (startDay > 2) startDay = 2;
+    if (endDay   > 2) endDay   = 2;
+
+    var startH   = _parseTimeToHour(startStr);
+    var endH     = _parseTimeToHour(endStr);
+    var durationH = (endDay - startDay) * 24 + endH - startH;
+    if (durationH <= 0) durationH += 24;
+
+    shifts.push({
+      startDay:  startDay,
+      startH:    startH,
+      startTime: startStr,
+      endDay:    endDay,
+      endH:      endH,
+      endTime:   endStr,
+      durationH: durationH,
+    });
+  }
+
+  Logger.log('_readManuelShifts: parsed ' + shifts.length + ' shifts');
+  return shifts;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _readManuelEvents — reads G4:L15 from the Manual Sim sheet and returns
+// an array of {start_day, start_time, end_day, end_time, type, label} objects
+// compatible with the existing chargingEvents format.
+// ─────────────────────────────────────────────────────────────────────────────
+function _readManuelEvents() {
+  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Manual Sim');
+  if (!sheet) return [];
+
+  // G=7, H=8, I=9, J=10, K=11, L=12 → range cols 7–12, rows 4–15
+  var data = sheet.getRange(4, 7, 12, 6).getValues();
+  // data[r][0]=# (G), [1]=startDay (H), [2]=startTime (I), [3]=endDay (J), [4]=endTime (K), [5]=label (L)
+
+  var events = [];
+  for (var i = 0; i < data.length; i++) {
+    var row       = data[i];
+    var startDay  = parseInt(row[1], 10);
+    var startVal  = row[2];
+    var endDay    = parseInt(row[3], 10);
+    var endVal    = row[4];
+    var label     = String(row[5] || '').trim();
+
+    // Skip empty rows (no start time or no end time)
+    if (!startVal && startVal !== 0) continue;
+    if (!endVal   && endVal   !== 0) continue;
+    var startStr = _formatManuelTime(startVal);
+    var endStr   = _formatManuelTime(endVal);
+    if (!startStr || !endStr) continue;
+
+    // Default days to 1 if not filled
+    if (isNaN(startDay) || startDay < 1) startDay = 1;
+    if (isNaN(endDay)   || endDay   < 1) endDay   = 1;
+    if (startDay > 2) startDay = 2;
+    if (endDay   > 2) endDay   = 2;
+
+    // Determine type: if it's the last non-empty event and end_day=2, treat as post_shift;
+    // otherwise treat as opportunity (user-defined schedule)
+    events.push({
+      start_day:  startDay,
+      start_time: startStr,
+      end_day:    endDay,
+      end_time:   endStr,
+      type:       'opportunity',
+      label:      label || ('Event ' + (i + 1)),
+    });
+  }
+
+  // Mark the last event as post_shift if it spans to day 2 and is longer than 60 min
+  // (mirrors Honda pattern where the final block is the overnight charge)
+  if (events.length > 0) {
+    var last = events[events.length - 1];
+    if (last.end_day === 2) {
+      last.type = 'post_shift';
+    }
+  }
+
+  Logger.log('_readManuelEvents: parsed ' + events.length + ' events');
+  return events;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _formatManuelTime — converts a Sheets cell value to "H:MM AM/PM" string.
+// Handles Date objects (Sheets stores time-only values as Date), plain strings,
+// and decimal hours (e.g. 6.5 → "6:30 AM").
+// ─────────────────────────────────────────────────────────────────────────────
+function _formatManuelTime(val) {
+  if (!val && val !== 0) return '';
+
+  // Date object — Sheets returns time values as Date in epoch
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, Session.getScriptTimeZone(), 'h:mm a')
+      .replace('am', 'AM').replace('pm', 'PM');
+  }
+
+  var str = String(val).trim();
+  if (str === '') return '';
+
+  // Already looks like a time string — normalise AM/PM casing and return
+  if (/^\d{1,2}:\d{2}\s*(AM|PM|am|pm)$/i.test(str)) {
+    return str.replace(/am$/i, 'AM').replace(/pm$/i, 'PM');
+  }
+
+  // "H:MM" with no AM/PM — keep as-is (simulation engine may accept 24h)
+  if (/^\d{1,2}:\d{2}$/.test(str)) {
+    return str;
+  }
+
+  // Decimal hours (e.g. 6.5)
+  var dec = parseFloat(str);
+  if (!isNaN(dec)) {
+    var h   = Math.floor(dec) % 24;
+    var m   = Math.round((dec - Math.floor(dec)) * 60);
+    var ampm = h < 12 ? 'AM' : 'PM';
+    var h12  = h % 12 || 12;
+    return h12 + ':' + (m < 10 ? '0' : '') + m + ' ' + ampm;
+  }
+
+  return str; // pass through unknown format unchanged
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _parseTimeToHour — converts a formatted time string (e.g. "10:15 AM",
+// "1:30 AM", "13:00") to a decimal hour value (0–23.99).
+// Used by _manuelCycleHours and _manuelTotalChargeMin.
+// ─────────────────────────────────────────────────────────────────────────────
+function _parseTimeToHour(timeStr) {
+  if (!timeStr) return 0;
+  var s = String(timeStr).trim();
+
+  // "H:MM AM/PM" or "HH:MM AM/PM"
+  var match = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (match) {
+    var h    = parseInt(match[1], 10);
+    var m    = parseInt(match[2], 10);
+    var ampm = match[3] ? match[3].toUpperCase() : null;
+    if (ampm === 'PM' && h !== 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    return h + m / 60;
+  }
+
+  // Decimal hours (e.g. 6.5)
+  var num = parseFloat(s);
+  if (!isNaN(num)) return num;
+  return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _manuelCycleHours — returns the total cycle length in hours, measured from
+// shift_start_hour to the latest event end time (accounting for day 2 events).
+// ─────────────────────────────────────────────────────────────────────────────
+function _manuelCycleHours(events, shiftStartHour) {
+  var startH   = shiftStartHour || 0;
+  var maxAbsEnd = startH; // fallback: at least 1h cycle
+  events.forEach(function(ev) {
+    var endH   = _parseTimeToHour(ev.end_time);
+    var absEnd = (ev.end_day === 2 ? 24 : 0) + endH;
+    if (absEnd > maxAbsEnd) maxAbsEnd = absEnd;
+  });
+  return Math.max(maxAbsEnd - startH, 1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _manuelTotalChargeMin — sums the duration of all Manuel charging events
+// (in minutes), handling day 2 events correctly.
+// ─────────────────────────────────────────────────────────────────────────────
+function _manuelTotalChargeMin(events) {
+  var total = 0;
+  events.forEach(function(ev) {
+    var startH   = _parseTimeToHour(ev.start_time);
+    var endH     = _parseTimeToHour(ev.end_time);
+    var absStart = (ev.start_day === 2 ? 24 : 0) + startH;
+    var absEnd   = (ev.end_day   === 2 ? 24 : 0) + endH;
+    var dur      = absEnd - absStart;
+    if (dur > 0) total += dur * 60;
+  });
+  return Math.round(total);
 }
