@@ -12,6 +12,62 @@
 
 function generateCustomBatteryHTML(params, ghostResult) {
   const layout      = ghostResult.layout;
+
+  // ── Infeasibility guard ───────────────────────────────────────────────────
+  if (!layout || layout.feasible === false) {
+    var _attempts  = (layout && layout.attempts)    || [];
+    var _targetAh  = (layout && layout.targetAh)    || '?';
+    var _voltage   = (layout && layout.voltage)     || '?';
+    var _seriesPks = (layout && layout.seriesPacks) || '?';
+    var _caissonD  = layout ? layout.caissonDepth.toFixed(2) : '?';
+    var _caissonW  = layout ? layout.caissonWidth.toFixed(2)  : '?';
+    var _compH     = layout ? layout.compHeight.toFixed(2)    : '?';
+    var _rowsHtml  = _attempts.map(function(a) {
+      return '<tr><td>' + (a.cellName || a.cellKey || '—') + '</td>' +
+             '<td style="text-align:center">' + (a.seriesNeeded || _seriesPks) + '</td>' +
+             '<td style="text-align:center">' + (a.maxPacks || '?') + '</td>' +
+             '<td>' + (a.reason || 'Inconnu') + '</td></tr>';
+    }).join('');
+    return '<!DOCTYPE html><html><head><meta charset="UTF-8">' +
+      '<title>VeloxCUSTOM — Disposition impossible</title>' +
+      '<style>' +
+        'body{margin:0;padding:40px;font-family:Arial,sans-serif;background:#1a2a3a;color:#e8edf2;}' +
+        'h1{color:#5ba3d9;font-size:22px;margin-bottom:4px;}' +
+        'h2{color:#7ab8e8;font-size:15px;font-weight:normal;margin-top:0;margin-bottom:28px;}' +
+        '.card{background:#243447;border-radius:8px;padding:24px;margin-bottom:20px;}' +
+        '.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px;}' +
+        '.lbl{color:#8aaabf;font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;}' +
+        '.val{font-size:18px;font-weight:bold;}' +
+        'table{width:100%;border-collapse:collapse;font-size:13px;}' +
+        'th{background:#1a2a3a;color:#8aaabf;text-align:left;padding:8px 12px;' +
+           'font-weight:normal;text-transform:uppercase;font-size:11px;letter-spacing:.06em;}' +
+        'td{padding:9px 12px;border-bottom:1px solid #2e4055;vertical-align:top;}' +
+        'tr:last-child td{border-bottom:none;}' +
+        '.badge{background:#c0392b;color:#fff;font-size:11px;font-weight:bold;' +
+               'padding:3px 10px;border-radius:4px;letter-spacing:.05em;}' +
+      '</style></head><body>' +
+      '<h1>Batterie VeloxCUSTOM — Disposition impossible</h1>' +
+      '<h2>Le compartiment est trop petit pour atteindre la capacité cible avec les cellules disponibles.</h2>' +
+      '<div class="grid">' +
+        '<div class="card"><div class="lbl">Compartiment (caisson)</div>' +
+          '<div class="val">' + _caissonD + '" × ' + _caissonW + '" × ' + _compH + '"</div></div>' +
+        '<div class="card"><div class="lbl">Capacité cible</div>' +
+          '<div class="val">' + _targetAh + ' Ah @ ' + _voltage + 'V</div></div>' +
+        '<div class="card"><div class="lbl">Modules en série requis</div>' +
+          '<div class="val">' + _seriesPks + ' modules</div></div>' +
+      '</div>' +
+      '<div class="card">' +
+        '<div class="lbl" style="margin-bottom:12px;">Tentatives &nbsp;<span class="badge">INFAISABLE</span></div>' +
+        '<table><thead><tr>' +
+          '<th>Cellule</th>' +
+          '<th style="text-align:center">Requis</th>' +
+          '<th style="text-align:center">Max possible</th>' +
+          '<th>Raison</th>' +
+        '</tr></thead><tbody>' + _rowsHtml + '</tbody></table>' +
+      '</div>' +
+      '</body></html>';
+  }
+
   const cell        = layout.cell;
   const compartment = layout.compDepth.toFixed(2) + '" × ' +
                       layout.compWidth.toFixed(2) + '" × ' +
