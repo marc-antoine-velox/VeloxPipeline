@@ -370,7 +370,8 @@ function _htmlSimSlide(entry, params, simNum, isEN) {
   const totalWork = h2 + 'h' + (m2 < 10 ? '0' : '') + m2;
 
   // Metric pills — dual battery shows 'Dual [X]Ah' instead of standard label
-  const isDualVelox    = entry.dual_battery && entry.velox_battery_count > 1;
+   const isDualVelox    = entry.dual_battery && entry.velox_battery_count > 1;
+  const isMaxPushed    = String(entry.flag || '').includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
   const perBatteryAh   = isDualVelox ? Math.round(entry.batteryAh / entry.velox_battery_count) : entry.batteryAh;
   const batteryPillLbl = isDualVelox ? ('Dual ' + perBatteryAh + 'Ah') : ('Velox' + entry.batteryModel);
   const batteryPillVal = isDualVelox ? ('Dual ' + perBatteryAh + 'Ah') : (entry.batteryAh + ' Ah');
@@ -519,7 +520,7 @@ function _htmlConclusionSlide(entry, params, simNum, isEN) {
   const isMaxPushed = String(entry.flag || '').includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
   const spec = (isEN ? 'Battery ' : 'Batterie ') + batterySpecLabel +
                '  ·  ' + (isEN ? 'Charger ' : 'Chargeur ') + 'Omni ' + entry.chargerAmps + 'A  ·  ' + volt + 'V' +
-               (isMaxPushed ? (isEN ? '  ·  Configuration poussée au maximum' : '  ·  Configuration poussée au maximum') : '');
+               '';
 
   // Conclusion text (short, clean)
   const concText = _htmlConclusionText(entry, params, isEN);
@@ -1142,7 +1143,7 @@ function _htmlBuildSimEntries(allSimResults, allSimScreenshots, params) {
   const isManualRun = allSimResults.some(function(s) { return s.scenario === 'MANUAL'; });
   const passing = allSimResults.filter(function(s) {
     if (s.passed) return true;
-    if (isManualRun && String(s.flag || '').includes('VELOXPLUS_POUSSE_AU_MAXIMUM')) return true;
+        if (String(s.flag || '').includes('VELOXPLUS_POUSSE_AU_MAXIMUM')) return true;
     return false;
   });
   const hasConstrainedPass = passing.some(function(s) {
@@ -1362,13 +1363,6 @@ function _htmlSOCChart(socArray, chargingEvents, simStartHour) {
   function px(min) { return padL + (min / 1439) * cW; }
   // Convert SOC value (0-100) to SVG y coordinate
   function py(val) { return padT + cH - (val / 100) * cH; }
-
-   // ── ROTATE SOC ARRAY so index 0 = shift start (e.g. 6:30 AM for Honda) ──
-  var simStart = simStartHour || 0;
-  var _startMin = Math.round(simStart * 60);
-  if (_startMin > 0 && _startMin < 1440) {
-    socArray = socArray.slice(_startMin).concat(socArray.slice(0, _startMin));
-  }
 
   // ── BUILD SMOOTH PATH FROM REAL SOC ARRAY ────────────────────────────────
   // Sample every 5 minutes (288 points) for performance
