@@ -536,7 +536,7 @@ function _htmlConclusionSlide(entry, params, simNum, isEN) {
   const hps = entry.motorHoursPerShift || 0;
   const h_ = Math.floor(hps), m_ = Math.round((hps - h_) * 60);
   const perShift = h_ + 'h' + (m_ < 10 ? '0' : '') + m_;
-  const annual = Math.round(s * hps * 5 * 52).toLocaleString('en-CA');
+  const annual = Math.round(s * hps * 250).toLocaleString('en-CA');
 
   // Charge minutes — prefer pre-stored value (set by Gemini extraction or Honda override)
   let chargeMin = 0;
