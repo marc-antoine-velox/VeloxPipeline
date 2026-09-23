@@ -4497,8 +4497,7 @@ function lookupPreviousSimulation(dealer, referencedModel, customer) {
       };
 
       // Check for exact model match
-      const modelHit = modelClean.length > 0 &&
-                       (rowModel.includes(modelClean) || rowFull.includes(modelClean));
+      const modelHit = modelClean.length > 0 && rowModel === modelClean;
 
       if (modelHit && !exactMatch) {
   var rawDate = row[col('Date')];

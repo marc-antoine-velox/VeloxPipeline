@@ -379,33 +379,36 @@ function runManualSim() {
   // ── Custom battery feasibility check (after plan2/plan3 exist) ─────────────
   if ((eboxLabel === 'NO FIT' || eboxLabel === 'CUSTOM') && p.compartment) {
     var cb1 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah);
-    if (cb1) {
+    if (cb1 && cb1.feasible !== false) {
       plan.displayBatteryType = 'VeloxCUSTOM';
       plan.customLayout = cb1;
       customBatteryLines.push('• Combo 1 — ' + p.battery_ah + 'Ah : RÉALISABLE (' + cb1.cellName + ', ' + cb1.cols + ' col × ' + cb1.rows + ' rng, ~' + cb1.achievedAh + 'Ah atteints)');
     } else {
+      if (cb1) { plan.customLayout = cb1; plan.customBatteryImpossible = true; }
       customBatteryLines.push('• Combo 1 — ' + p.battery_ah + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
     }
   }
   if (hasCombo2 && (eboxLabel2 === 'NO FIT' || eboxLabel2 === 'CUSTOM') && p.compartment) {
 
     var cb2 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah_2);
-    if (cb2) {
+    if (cb2 && cb2.feasible !== false) {
       plan2.displayBatteryType = 'VeloxCUSTOM';
       plan2.customLayout = cb2;
       customBatteryLines.push('• Combo 2 — ' + p.battery_ah_2 + 'Ah : RÉALISABLE (' + cb2.cellName + ', ' + cb2.cols + ' col × ' + cb2.rows + ' rng, ~' + cb2.achievedAh + 'Ah atteints)');
     } else {
+      if (cb2) { plan2.customLayout = cb2; plan2.customBatteryImpossible = true; }
       customBatteryLines.push('• Combo 2 — ' + p.battery_ah_2 + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
     }
   }
   if (hasCombo3 && (eboxLabel3 === 'NO FIT' || eboxLabel3 === 'CUSTOM') && p.compartment) {
     var cb3 = calculateCustomBattery(p.compartment, p.voltage, p.battery_ah_3);
-    if (cb3) {
+    if (cb3 && cb3.feasible !== false) {
       plan3.displayBatteryType = 'VeloxCUSTOM';
       plan3.customLayout = cb3;
       customBatteryLines.push('• Combo 3 — ' + p.battery_ah_3 + 'Ah : RÉALISABLE (' + cb3.cellName + ', ' + cb3.cols + ' col × ' + cb3.rows + ' rng, ~' + cb3.achievedAh + 'Ah atteints)');
     } else {
       customBatteryLines.push('• Combo 3 — ' + p.battery_ah_3 + 'Ah : IMPOSSIBLE (aucun arrangement ne rentre dans ce compartiment)');
+      if (cb3) { plan3.customLayout = cb3; plan3.customBatteryImpossible = true; }
     }
   }
 
@@ -656,15 +659,27 @@ function runManualSim() {
     p.shift_duration                  = manuelCycleH;
     p.stated_charge_minutes_per_shift = manuelChargeMin;
 
-    // Derive sim_start_time string from shift_start_hour (same approach as Honda override).
-    // Without this, runSingleSim writes midnight to J16 because shift_duration=24 triggers
-    // a 24h-cycle code path that resets the start clock to midnight.
-    var _ssh  = p.shift_start_hour;  // comes from B33 on the Manuel sim sheet
-    var _sh   = Math.floor(_ssh);
-    var _sm   = Math.round((_ssh - _sh) * 60);
-    var _ampm = _sh < 12 ? 'AM' : 'PM';
-    var _h12  = _sh % 12 || 12;
-    var manuelSimStart = _h12 + ':' + (_sm < 10 ? '0' : '') + _sm + ' ' + _ampm;
+    // ── Quarts de travail (Working Shifts) — read FIRST so we can derive
+    // sim_start_time from the actual first shift, not from B33 (shift_start_hour).
+    var _manuelShifts = _readManuelShifts();
+
+    // Derive sim_start_time: use the first shift's start time when the table is filled.
+    // Without setting this explicitly, runSingleSim writes midnight to J16 because
+    // shift_duration can trigger a code path that resets the start clock.
+    var manuelSimStart;
+    if (_manuelShifts.length > 0) {
+      manuelSimStart              = _manuelShifts[0].startTime;   // e.g. "7:00 AM" from Quarts de travail
+      p.shift_start_hour          = _manuelShifts[0].startH;      // keep Data Entry display in sync
+      fullParams.shift_start_hour = _manuelShifts[0].startH;
+    } else {
+      // Fallback: derive from B33 (shift_start_hour) when Quarts de travail is empty
+      var _ssh  = p.shift_start_hour;
+      var _sh   = Math.floor(_ssh);
+      var _sm   = Math.round((_ssh - _sh) * 60);
+      var _ampm = _sh < 12 ? 'AM' : 'PM';
+      var _h12  = _sh % 12 || 12;
+      manuelSimStart = _h12 + ':' + (_sm < 10 ? '0' : '') + _sm + ' ' + _ampm;
+    }
 
     // Override plan objects — used by the Portée timeline and runSingleSim (→ J16)
     plan.shifts         = 1;
@@ -678,11 +693,7 @@ function runManualSim() {
     fullParams.shift_duration                  = manuelCycleH;
     fullParams.stated_charge_minutes_per_shift = manuelChargeMin;
 
-    // ── Working Shifts table override (display/logging only) ─────────────────
-    // Reads the "Quarts de travail" table (N4:R7). If filled, replaces fullParams
-    // shifts/shift_duration so the LOGS/filename reflect actual work shifts
-    // instead of the simulation cycle length. Does NOT affect plan or Formula sheet.
-    var _manuelShifts = _readManuelShifts();
+    // Update fullParams shifts/duration for display/logging from Quarts de travail
     if (_manuelShifts.length > 0) {
       fullParams.shifts         = _manuelShifts.length;
       fullParams.shift_duration = _manuelShifts[0].durationH;
@@ -705,16 +716,21 @@ function runManualSim() {
     if (sim3) allSimResults.push(sim3);
   }
 
+  // Transfer customBatteryImpossible flag from plan to sim result
+  if (plan.customBatteryImpossible && sim1) sim1.customBatteryImpossible = true;
+  if (hasCombo2 && sim2 && plan2.customBatteryImpossible) sim2.customBatteryImpossible = true;
+  if (hasCombo3 && sim3 && plan3.customBatteryImpossible) sim3.customBatteryImpossible = true;
 
   // Determine overall status from all sims
   var anyViable = allSimResults.filter(function(s) { return s.passed; }).length;
 
   // ── 11. Generate Portée PDF ───────────────────────────────────────────────
   var porteePdf;
-  var socArrays = allSimResults.map(function(s) { return s.soc_over_time; });
+  var porteeSimResults = allSimResults.filter(function(s) { return !s.customBatteryImpossible; });
+  var socArrays = porteeSimResults.map(function(s) { return s.soc_over_time; });
   for (var attempt = 1; attempt <= 3; attempt++) {
     try {
-      porteePdf = buildHTMLPortee(fullParams, allSimResults, socArrays);
+      porteePdf = buildHTMLPortee(fullParams, porteeSimResults, socArrays);
       if (porteePdf) break;
       Logger.log('buildHTMLPortee attempt ' + attempt + '/3 returned null — retrying...');
     } catch(e) {
@@ -1289,7 +1305,7 @@ function _readManuelShifts() {
   if (!sheet) return [];
 
   // N=14, O=15, P=16, Q=17, R=18  →  rows 4–7, cols 14–18, 4 rows × 5 cols
-  var data = sheet.getRange(4, 14, 4, 5).getValues();
+  var data = sheet.getRange(4, 13, 4, 5).getValues();
   // data[r][0]=# (N), [1]=startDay (O), [2]=startTime (P), [3]=endDay (Q), [4]=endTime (R)
 
   var shifts = [];
@@ -1343,7 +1359,7 @@ function _readManuelEvents() {
   if (!sheet) return [];
 
   // G=7, H=8, I=9, J=10, K=11, L=12 → range cols 7–12, rows 4–15
-  var data = sheet.getRange(4, 7, 12, 6).getValues();
+  var data = sheet.getRange(4, 6, 12, 6).getValues();
   // data[r][0]=# (G), [1]=startDay (H), [2]=startTime (I), [3]=endDay (J), [4]=endTime (K), [5]=label (L)
 
   var events = [];
