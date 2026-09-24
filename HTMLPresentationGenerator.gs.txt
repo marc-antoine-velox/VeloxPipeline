@@ -436,7 +436,7 @@ function _htmlSimSlide(entry, params, simNum, isEN) {
 
   // SOC screenshot
   const socHtml = (entry.screenshot && Array.isArray(entry.screenshot))
-     ? _htmlSOCChart(entry.screenshot, entry.chargingEvents || [], (entry.shift_start_hour != null && entry.shift_start_hour >= 5 && entry.shift_start_hour <= 22) ? Math.floor(entry.shift_start_hour) : 0, (entry.charging_pattern || '').toLowerCase() !== 'manuel' && !(entry.scenario || '').toUpperCase().includes('CONTRAINTE'))
+     ? _htmlSOCChart(entry.screenshot, entry.chargingEvents || [], (entry.shift_start_hour != null && entry.shift_start_hour >= 5 && entry.shift_start_hour <= 22) ? Math.floor(entry.shift_start_hour) : 0, (entry.charging_pattern || '').toLowerCase() === 'regular')
 
 
 
@@ -664,14 +664,29 @@ function _htmlChargeColumns(entry, isEN) {
         lbl !== 'post-shift charge';
     });
 
-    // ── STEP 3A: Distribute events evenly across shifts ───────────────────
-    // Events are stored sequentially (S1 events first, then S2, then S3)
-    // so we slice them into equal chunks — one chunk per shift
-    const perShift = Math.ceil(workOnly.length / s);
-    for (let i = 1; i <= s; i++) {
-      const start = (i - 1) * perShift;
-      groups['S' + i] = workOnly.slice(start, start + perShift);
+    // ── STEP 3A: Assign events to shifts by start time (not by count) ──────
+    // Use shift_start_hour + shift_duration to find which shift each event belongs to.
+    // This fixes wrong S1/S2 labeling when charges happen after the first shift ends.
+    var _ssa = (entry.shift_start_hour != null && !isNaN(+entry.shift_start_hour)) ? +entry.shift_start_hour : 7;
+    var _sdu = (entry.shift_duration  != null && !isNaN(+entry.shift_duration))  ? +entry.shift_duration  : 8;
+    function _eMin(t) {
+      var str = String(t || '').trim().toUpperCase();
+      var pm = str.indexOf('PM') >= 0; var am = str.indexOf('AM') >= 0;
+      str = str.replace('AM','').replace('PM','').trim();
+      var p = str.split(':'); var h = parseInt(p[0])||0; var m2 = parseInt(p[1])||0;
+      if (pm && h !== 12) h += 12; if (am && h === 12) h = 0;
+      return h * 60 + m2;
     }
+    for (var _si = 1; _si <= s; _si++) {
+      var _ws = (_ssa + (_si - 1) * _sdu) * 60;
+      var _we = _ws + _sdu * 60;
+      groups['S' + _si] = workOnly.filter(function(ev) {
+        var em = _eMin(ev.start_time); return em >= _ws && em < _we;
+      });
+    }
+    // Fallback: assign orphan events (boundary edge cases) to the last shift
+    var _flat = [].concat.apply([], Object.keys(groups).map(function(k){ return groups[k]; }));
+    workOnly.forEach(function(ev) { if (_flat.indexOf(ev) < 0) { (groups['S' + s] = groups['S' + s] || []).push(ev); } });
   } else {
     // ── STEP 2B: Fallback if no chargingEvents — use legacy schedule ──────
     // Some older sim entries may not have chargingEvents populated,
@@ -820,7 +835,7 @@ function _htmlTimelineSVG(entry, isEN) {
   const events = entry.chargingEvents || [];
 
   // Adaptive axis: use shift_start_hour when explicitly set (avoids overnight charges pulling axis to midnight)
-  var _useMidnight = (entry.charging_pattern || '').toLowerCase() !== 'manuel' && !(entry.scenario || '').toUpperCase().includes('CONTRAINTE');
+  var _useMidnight = (entry.charging_pattern || '').toLowerCase() === 'regular';
   var axisStart = (_useMidnight || entry.shift_start_hour == null || shiftStart < 5 || shiftStart > 22) ? 0 : Math.floor(shiftStart);
 
 
