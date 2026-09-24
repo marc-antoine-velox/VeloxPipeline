@@ -436,7 +436,7 @@ function _htmlSimSlide(entry, params, simNum, isEN) {
 
   // SOC screenshot
   const socHtml = (entry.screenshot && Array.isArray(entry.screenshot))
-    ? _htmlSOCChart(entry.screenshot, entry.chargingEvents || [], (entry.shift_start_hour != null && entry.shift_start_hour >= 5 && entry.shift_start_hour <= 22) ? Math.floor(entry.shift_start_hour) : 0)
+     ? _htmlSOCChart(entry.screenshot, entry.chargingEvents || [], (entry.shift_start_hour != null && entry.shift_start_hour >= 5 && entry.shift_start_hour <= 22) ? Math.floor(entry.shift_start_hour) : 0, (entry.charging_pattern || '').toLowerCase() !== 'manuel' && !(entry.scenario || '').toUpperCase().includes('CONTRAINTE'))
 
 
 
@@ -820,7 +820,8 @@ function _htmlTimelineSVG(entry, isEN) {
   const events = entry.chargingEvents || [];
 
   // Adaptive axis: use shift_start_hour when explicitly set (avoids overnight charges pulling axis to midnight)
-  var axisStart = (entry.shift_start_hour != null && shiftStart >= 5 && shiftStart <= 22) ? Math.floor(shiftStart) : 0;
+  var _useMidnight = (entry.charging_pattern || '').toLowerCase() !== 'manuel' && !(entry.scenario || '').toUpperCase().includes('CONTRAINTE');
+  var axisStart = (_useMidnight || entry.shift_start_hour == null || shiftStart < 5 || shiftStart > 22) ? 0 : Math.floor(shiftStart);
 
 
 
@@ -1304,7 +1305,8 @@ function _htmlBuildSimEntries(allSimResults, allSimScreenshots, params) {
       total_ah_raw: Math.round((sim.results && sim.results.total_ah) || 0),
       dual_battery: sim.dual_battery || false,
       velox_battery_count: sim.velox_battery_count || 1,
-      single_slot_ah: sim.single_slot_ah || 0
+      single_slot_ah: sim.single_slot_ah || 0,
+      charging_pattern: params.charging_pattern || 'Regular'
     };
   });
   // ── HONDA OVERRIDE (presentation values) ─────────────────────────────────
@@ -1398,7 +1400,7 @@ function checkImageDimensions() {
   }
 }
 
-function _htmlSOCChart(socArray, chargingEvents, simStartHour) {
+function _htmlSOCChart(socArray, chargingEvents, simStartHour, midnightMode) {
   // ── DIMENSIONS ────────────────────────────────────────────────────────────
   // SVG is 526x313px — matches the chart card exactly (no scaling needed)
   // padL=38 padR=10 padT=46 padB=32 => plot area cW=478 cH=235
@@ -1417,10 +1419,19 @@ function _htmlSOCChart(socArray, chargingEvents, simStartHour) {
   // Sample every 5 minutes (288 points) for performance
   // Uses cubic bezier smoothing to avoid staircase appearance
   var sampled = [];
-  for (var i = 0; i < 1440; i += 5) {
-    sampled.push({ min: i, v: socArray[i] || 0 });
+  if (midnightMode && simStartHour > 0) {
+    for (var i = 0; i < 1440; i += 5) {
+      var clockMin = (simStartHour * 60 + i) % 1440;
+      sampled.push({ min: clockMin, v: socArray[i] || 0 });
+    }
+    sampled.push({ min: (simStartHour * 60 + 1439) % 1440, v: socArray[1439] || 0 });
+    sampled.sort(function(a, b) { return a.min - b.min; });
+  } else {
+    for (var i = 0; i < 1440; i += 5) {
+      sampled.push({ min: i, v: socArray[i] || 0 });
+    }
+    sampled.push({ min: 1439, v: socArray[1439] || 0 });
   }
-  sampled.push({ min: 1439, v: socArray[1439] || 0 });
 
   var pathD = 'M' + px(sampled[0].min).toFixed(1) + ',' + py(sampled[0].v).toFixed(1);
   for (var k = 1; k < sampled.length - 1; k++) {
@@ -1490,7 +1501,7 @@ function _htmlSOCChart(socArray, chargingEvents, simStartHour) {
   }
 
   // ── X-AXIS: major every 3h, minor every 1h ────────────────────────────────
-  var simStart = simStartHour || 0;
+  var simStart = midnightMode ? 0 : (simStartHour || 0);
   var xMajorLabels = [];
   for (var li = 0; li < 8; li++) {
     var rh = (simStart + li * 3) % 24;
