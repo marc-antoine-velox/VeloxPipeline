@@ -602,6 +602,8 @@ function runManualSim() {
     email_subject:         'Manual Sim — ' + p.forklift_manufacturer + ' ' + p.forklift_model,
     gmail_thread_id:       manualThreadId,
   };
+  // Default charging_pattern to 'Regular' for standard simulations
+  if (!fullParams.charging_pattern) fullParams.charging_pattern = 'Regular';
   // ── HONDA OVERRIDE ──────────────────────────────────────────────────────────
   if (p.charging_pattern === 'Honda') {
     fullParams.charging_pattern           = 'Honda';
