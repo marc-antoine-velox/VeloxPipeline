@@ -436,6 +436,30 @@ function runManualSim() {
       var simRes     = effSearch.finalResults;
       var effFlag    = effSearch.flag;
       var wh         = calculateWorkHours(chargingEvents, p.shifts, maxEff, p.shift_duration, p.shift_start_hour);
+
+      // ── MANUEL WORK HOURS FIX ─────────────────────────────────────────────────
+      // calculateWorkHours uses p.shifts=1, p.shift_duration=manuelCycleH, which falls
+      // to the else-branch (3×8h windows spanning 24h) → wrong total. Override with
+      // the actual per-shift windows from _manuelShifts.
+      if (fullParams.charging_pattern === 'Manuel' && _manuelShifts && _manuelShifts.length > 0) {
+        var _eff = maxEff / 100;
+        var _totalMin = 0;
+        _manuelShifts.forEach(function(shift) {
+          var _sStart = Math.round(shift.startH * 60);
+          var _sEnd   = Math.round((shift.startH + shift.durationH) * 60);
+          var _cMin   = 0;
+          chargingEvents.forEach(function(ev) {
+            var _evS = timeToMinutes(ev.start_time);
+            var _evE = timeToMinutes(ev.end_time);
+            if (String(ev.end_time).toUpperCase().includes('11:59')) _evE = 1440;
+            var _os = Math.max(_evS, _sStart), _oe = Math.min(_evE, _sEnd);
+            if (_oe > _os) _cMin += _oe - _os;
+          });
+          _totalMin += Math.round((_sEnd - _sStart - _cMin) * _eff);
+        });
+        wh = { totalMinutes: _totalMin, formatted: minutesToHours(_totalMin), perShift: [] };
+        Logger.log('MANUEL WH FIX: ' + _totalMin + 'min (' + minutesToHours(_totalMin) + 'h) across ' + _manuelShifts.length + ' shifts');
+      }
       var isMax      = effFlag && String(effFlag).includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
       var passed     = simRes.status === 'PASS' && !isMax;
       // Re-run winning efficiency so Formula sheet recalculates correctly for screenshot
