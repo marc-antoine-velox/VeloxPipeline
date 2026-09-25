@@ -436,7 +436,7 @@ function _htmlSimSlide(entry, params, simNum, isEN) {
 
   // SOC screenshot
   const socHtml = (entry.screenshot && Array.isArray(entry.screenshot))
-     ? _htmlSOCChart(entry.screenshot, entry.chargingEvents || [], (entry.shift_start_hour != null && entry.shift_start_hour >= 5 && entry.shift_start_hour <= 22) ? Math.floor(entry.shift_start_hour) : 0, !(entry.stated_charge_minutes_per_shift > 0) && !(entry.scenario || '').includes('CONTRAINTE'))
+     ? _htmlSOCChart(entry.screenshot, entry.chargingEvents || [], (entry.shift_start_hour != null && entry.shift_start_hour >= 5 && entry.shift_start_hour <= 22) ? Math.floor(entry.shift_start_hour) : 0, !(entry.scenario || '').includes('CONTRAINTE') && ((entry.charging_pattern === 'Regular') || (!entry.charging_pattern && !(entry.stated_charge_minutes_per_shift > 0))))
 
 
 
@@ -835,7 +835,10 @@ function _htmlTimelineSVG(entry, isEN) {
   const events = entry.chargingEvents || [];
 
   // Adaptive axis: use shift_start_hour when explicitly set (avoids overnight charges pulling axis to midnight)
-  var _useMidnight = !(entry.stated_charge_minutes_per_shift > 0) && !(entry.scenario || '').includes('CONTRAINTE');
+  var _useMidnight = !(entry.scenario || '').includes('CONTRAINTE') && (
+    (entry.charging_pattern === 'Regular') ||
+    (!entry.charging_pattern && !(entry.stated_charge_minutes_per_shift > 0))
+  );
   var axisStart = (_useMidnight || entry.shift_start_hour == null || shiftStart < 5 || shiftStart > 22) ? 0 : Math.floor(shiftStart);
 
 

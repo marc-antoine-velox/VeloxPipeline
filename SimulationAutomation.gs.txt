@@ -1111,10 +1111,11 @@ function calculateWorkHours(chargingEvents, shifts, truckEfficiency, shiftDurati
 // ─────────────────────────────────────────────────────────────────────────────
 // NO-CHARGE-DURING-SHIFT: battery works full shift, charges only after
 // ─────────────────────────────────────────────────────────────────────────────
-function buildPostShiftOnlyChargingEvents(shiftStartHour, shiftDuration) {
+function buildPostShiftOnlyChargingEvents(shiftStartHour, shiftDuration, shifts) {
   var startH = (shiftStartHour !== undefined && shiftStartHour !== null) ? shiftStartHour : 7;
   var dur = shiftDuration || 8;
-  var endH = startH + dur;
+  var numShifts = (shifts && shifts > 0) ? shifts : 1;
+  var endH = startH + dur * numShifts; // covers all shifts, e.g. 7+8*2=23 for 2×8h
 
   function toTimeStr(h) {
     var hh = Math.floor(h) % 24;
