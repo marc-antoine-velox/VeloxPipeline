@@ -460,6 +460,33 @@ function runManualSim() {
         wh = { totalMinutes: _totalMin, formatted: minutesToHours(_totalMin), perShift: [] };
         Logger.log('MANUEL WH FIX: ' + _totalMin + 'min (' + minutesToHours(_totalMin) + 'h) across ' + _manuelShifts.length + ' shifts');
       }
+
+        // ── HONDA WORK HOURS FIX ──────────────────────────────────────────────────
+        // Honda uses 2x9.5h shifts starting at 6:30 AM; 9.5h doesn't match any
+        // calculateWorkHours explicit case -> falls to else (3x8h windows) -> wrong.
+        // Use absolute minutes (with start_day offset) to handle shift 2 wrapping past midnight.
+        if (fullParams.charging_pattern === 'Honda') {
+          var _hEff    = maxEff / 100;
+          var _hStart  = Math.round(6.5 * 60);   // 390 = 6:30 AM
+          var _hDur    = Math.round(9.5 * 60);   // 570 min
+          var _hWins   = [{ start: _hStart,            end: _hStart + _hDur },
+                          { start: _hStart + _hDur,    end: _hStart + 2 * _hDur }];
+          var _hTotal  = 0;
+          _hWins.forEach(function(win) {
+            var _hCMin = 0;
+            chargingEvents.forEach(function(ev) {
+              var _dayOff    = ((ev.start_day || 1) - 1) * 1440;
+              var _endDayOff = ((ev.end_day   || 1) - 1) * 1440;
+              var _evS = _dayOff    + timeToMinutes(ev.start_time);
+              var _evE = _endDayOff + timeToMinutes(ev.end_time);
+              var _hos = Math.max(_evS, win.start), _hoe = Math.min(_evE, win.end);
+              if (_hoe > _hos) _hCMin += _hoe - _hos;
+            });
+            _hTotal += Math.round((win.end - win.start - _hCMin) * _hEff);
+          });
+          wh = { totalMinutes: _hTotal, formatted: minutesToHours(_hTotal), perShift: [] };
+          Logger.log('HONDA WH FIX: ' + _hTotal + 'min (' + minutesToHours(_hTotal) + 'h)');
+        }
       var isMax      = effFlag && String(effFlag).includes('VELOXPLUS_POUSSE_AU_MAXIMUM');
       var passed     = simRes.status === 'PASS' && !isMax;
       // Re-run winning efficiency so Formula sheet recalculates correctly for screenshot
