@@ -436,7 +436,6 @@ function runManualSim() {
       var simRes     = effSearch.finalResults;
       var effFlag    = effSearch.flag;
       var wh         = calculateWorkHours(chargingEvents, p.shifts, maxEff, p.shift_duration, p.shift_start_hour);
-
       // ── MANUEL WORK HOURS FIX ─────────────────────────────────────────────────
       // calculateWorkHours uses p.shifts=1, p.shift_duration=manuelCycleH, which falls
       // to the else-branch (3×8h windows spanning 24h) → wrong total. Override with
@@ -460,10 +459,9 @@ function runManualSim() {
         wh = { totalMinutes: _totalMin, formatted: minutesToHours(_totalMin), perShift: [] };
         Logger.log('MANUEL WH FIX: ' + _totalMin + 'min (' + minutesToHours(_totalMin) + 'h) across ' + _manuelShifts.length + ' shifts');
       }
-
         // ── HONDA WORK HOURS FIX ──────────────────────────────────────────────────
-        // Honda uses 2x9.5h shifts starting at 6:30 AM; 9.5h doesn't match any
-        // calculateWorkHours explicit case -> falls to else (3x8h windows) -> wrong.
+        // Honda uses 2×9.5h shifts starting at 6:30 AM; 9.5h doesn't match any
+        // calculateWorkHours explicit case → falls to else (3×8h windows) → wrong.
         // Use absolute minutes (with start_day offset) to handle shift 2 wrapping past midnight.
         if (fullParams.charging_pattern === 'Honda') {
           var _hEff    = maxEff / 100;

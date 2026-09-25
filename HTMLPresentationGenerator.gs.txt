@@ -1437,11 +1437,17 @@ function _htmlSOCChart(socArray, chargingEvents, simStartHour, midnightMode) {
   // ── BUILD SMOOTH PATH FROM REAL SOC ARRAY ────────────────────────────────
   // Sample every 5 minutes (288 points) for performance
   // Uses cubic bezier smoothing to avoid staircase appearance
+  // Rotate SOC array so midnight is at position x=0
+  var _shiftMin = Math.round((simStartHour || 0) * 60);
+  var _midOff = (midnightMode && _shiftMin > 0) ? (1440 - _shiftMin) : 0;
+  var rotSOC = [];
+  for (var ri = 0; ri < 1440; ri++) { rotSOC.push(socArray[(_midOff + ri) % 1440] || 0); }
+
   var sampled = [];
     for (var i = 0; i < 1440; i += 5) {
-      sampled.push({ min: i, v: socArray[i] || 0 });
+      sampled.push({ min: i, v: rotSOC[i] || 0 });
     }
-    sampled.push({ min: 1439, v: socArray[1439] || 0 });
+    sampled.push({ min: 1439, v: rotSOC[1439] || 0 });
 
   var pathD = 'M' + px(sampled[0].min).toFixed(1) + ',' + py(sampled[0].v).toFixed(1);
   for (var k = 1; k < sampled.length - 1; k++) {
