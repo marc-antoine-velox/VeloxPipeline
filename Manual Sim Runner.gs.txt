@@ -241,6 +241,9 @@ function runManualSim() {
   p.no_charge_during_shift          = (raw36 === 0);
   p.stated_charge_minutes_per_shift = (raw36 <= 1) ? 0 : raw36;
   Logger.log('raw36 type=' + typeof raw36 + ' value=' + raw36 + ' no_charge=' + p.no_charge_during_shift);
+  // Non-Manuel patterns never have mid-shift charge minutes — prevent B37 leftover from a
+  // previous Manuel run contaminating the midnight-mode detection in the HTML chart generator.
+  if (p.charging_pattern !== 'Manuel') p.stated_charge_minutes_per_shift = 0;
 
   // ── 2. Basic validation ───────────────────────────────────────────────────
   var missing = [];
